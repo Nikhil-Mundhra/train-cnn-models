@@ -34,13 +34,11 @@ train-cnn-models/
 │   ├── classification/                  # Multi-head ConvNeXt, Grad-CAM & device managers
 │   └── segmentation/                    # 15-Layer Hierarchical U-Net & analyzers
 ├── image-classification-model-training/ # Disease classification pipeline (configs & data loaders)
-├── image-segmentation-model-training/   # Layer & lesion segmentation pipeline
-├── model_training/                      # Detailed model training experiment setups
+├── model_training/                      # Unified model training & validation experiment setups (Models 1, 4, 5)
 ├── models_suite/                        # Trained model suite architecture definitions
-├── scripts/                             # Notebooks for Kaggle and Colab training
+├── scripts/                             # Cloud notebooks & validation CSV generators
 ├── tests/                               # Battery of diagnostic tests for model health
 ├── train_cls_frozen.py                  # Frozen-encoder training script
-├── generate_final_validation_csv.py     # Suite validation metrics calculation script
 └── diagnostics_report.md                # Automated model health diagnostic report
 ```
 

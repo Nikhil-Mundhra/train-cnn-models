@@ -18,11 +18,11 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-SEG_ROOT = Path(__file__).resolve().parents[2] / "image-segmentation-model-training"
+SEG_ROOT = Path(__file__).resolve().parents[2] / "model_training"
 sys.path.insert(0, str(SEG_ROOT))
 from models_suite.model1_oct5k_layers.unet_layers import RetinalLayersUNet
 
-CHECKPOINT = SEG_ROOT / "models_suite/model1_oct5k_layers/checkpoints/best_model.pth"
+CHECKPOINT = Path(__file__).resolve().parents[2] / "models_suite/model1_oct5k_layers/checkpoints/best_model.pth"
 VALID_EXT  = {'.jpg', '.jpeg', '.png', '.bmp'}
 SEG_SIZE   = 512
 DEVICE     = torch.device("mps" if torch.backends.mps.is_available()

@@ -1,7 +1,26 @@
 import os
+import sys
+
+sys.stdout.reconfigure(line_buffering=True)
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+WORKSPACE_ROOT = SCRIPT_DIR.parents[1]
+TRAINING_ROOT = SCRIPT_DIR.parent
+
+if str(WORKSPACE_ROOT) not in sys.path:
+    sys.path.insert(0, str(WORKSPACE_ROOT))
+if str(TRAINING_ROOT) not in sys.path:
+    sys.path.insert(0, str(TRAINING_ROOT))
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from train_cleanup import enforce_single_instance_and_clean_memory, clean_gpu_memory
+
 import torch
 from torch.utils.data import DataLoader, random_split
-from pathlib import Path
 from tqdm import tqdm
 
 from models_suite.model5_oct5k_detection.detector import OCTPathologyDetector
@@ -12,8 +31,12 @@ def collate_fn(batch):
     return tuple(zip(*batch))
 
 def train():
-    device = torch.device("mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu"))
-    print(f"Training Model 5 (OCT5K Pathology Detection) on device: {device}")
+    # HARDWIRED CLEANUP & SINGLE INSTANCE GUARD
+    enforce_single_instance_and_clean_memory("train_model5_oct5k_detection")
+
+    # Use CPU for torchvision Faster R-CNN to avoid Metal RPN kernel compatibility issues on macOS
+    device = torch.device("cpu")
+    print(f"Training Model 5 (OCT5K Pathology Detection) on device: {device}", flush=True)
 
     full_dataset = OCT5KDetectionDataset(root_dir=config.DATASET_ROOT)
     train_size = int(0.85 * len(full_dataset))
@@ -27,17 +50,28 @@ def train():
     optimizer = torch.optim.AdamW(detector.parameters(), lr=config.LEARNING_RATE)
 
     os.makedirs(config.CHECKPOINT_DIR, exist_ok=True)
+    suite_ckpt_dir = WORKSPACE_ROOT / "models_suite" / "model5_oct5k_detection" / "checkpoints"
+    os.makedirs(suite_ckpt_dir, exist_ok=True)
+
     best_loss = float('inf')
 
     for epoch in range(1, config.EPOCHS + 1):
         detector.train()
         train_loss = 0.0
+        num_batches = 0
+        total_batches = len(train_loader)
 
-        for images, targets in tqdm(train_loader, desc=f"Epoch {epoch}/{config.EPOCHS}"):
+        for i, (images, targets) in enumerate(train_loader):
             images = [img.to(device) for img in images]
             targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
-            loss_dict = detector(images, targets)
+            valid_targets = [t for t in targets if len(t["boxes"]) > 0]
+            if not valid_targets:
+                continue
+
+            valid_images = [img for img, t in zip(images, targets) if len(t["boxes"]) > 0]
+
+            loss_dict = detector(valid_images, valid_targets)
             losses = sum(loss for loss in loss_dict.values())
 
             optimizer.zero_grad()
@@ -45,15 +79,31 @@ def train():
             optimizer.step()
 
             train_loss += losses.item()
+            num_batches += 1
 
-        train_loss /= len(train_loader)
-        print(f"Epoch {epoch:02d} | Detector Loss: {train_loss:.4f}")
+            if (i + 1) % 25 == 0 or (i + 1) == total_batches:
+                print(f"Epoch {epoch:02d}/{config.EPOCHS:02d} | Batch {i+1}/{total_batches} | Step Loss: {losses.item():.4f}", flush=True)
+
+        if num_batches > 0:
+            train_loss /= num_batches
+        print(f">>> Epoch {epoch:02d}/{config.EPOCHS:02d} COMPLETE | Detector Loss: {train_loss:.4f}", flush=True)
 
         if train_loss < best_loss:
             best_loss = train_loss
-            ckpt_path = Path(config.CHECKPOINT_DIR) / "model5_best.pth"
-            torch.save(detector.state_dict(), ckpt_path)
-            print(f" Saved new best detector checkpoint to {ckpt_path}")
+            ckpt_data = {
+                'epoch': epoch,
+                'model_state_dict': detector.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'train_loss': train_loss
+            }
+            local_ckpt = Path(config.CHECKPOINT_DIR) / "model5_detection_best.pth"
+            suite_ckpt = suite_ckpt_dir / "best_model.pth"
+            
+            torch.save(ckpt_data, local_ckpt)
+            torch.save(ckpt_data, suite_ckpt)
+            print(f" -> Saved new best detector checkpoint to {suite_ckpt}", flush=True)
+
+        clean_gpu_memory()
 
 if __name__ == "__main__":
     train()

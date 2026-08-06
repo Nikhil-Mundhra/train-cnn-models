@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 
 # Setup paths
-local_path = str(Path(__file__).resolve().parent / "image-segmentation-model-training" / "training")
+local_path = str(Path(__file__).resolve().parent / "model_training")
 sys.path.insert(0, local_path)
 
 # Import model

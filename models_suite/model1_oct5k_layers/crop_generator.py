@@ -20,7 +20,12 @@ class RetinaCropper:
         Returns:
             masked_image: Same shape as image_tensor, background set to 0.
         """
-        retina_mask = (seg_mask != self.bg_id).unsqueeze(1 if image_tensor.dim() == 4 else 0)
+        retina_mask = (seg_mask != self.bg_id)
+        while retina_mask.dim() < image_tensor.dim():
+            if image_tensor.dim() == 4 and retina_mask.dim() == 2:
+                retina_mask = retina_mask.unsqueeze(0)
+            else:
+                retina_mask = retina_mask.unsqueeze(1 if retina_mask.dim() == 3 else 0)
         return image_tensor * retina_mask.to(image_tensor.device)
 
     def crop_retina_bbox(self, image_tensor: torch.Tensor, seg_mask: torch.Tensor, margin: int = 10):

@@ -1,6 +1,7 @@
 import os
 import sys
 import torch
+import torch.nn.functional as F
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -8,26 +9,28 @@ import cv2
 from pathlib import Path
 from tqdm import tqdm
 
-WORKSPACE_ROOT = Path("/Users/nikhilmundhra/Documents/Github/OCT-Analyser-Capstone")
+SCRIPT_DIR = Path(__file__).resolve().parent
+WORKSPACE_ROOT = SCRIPT_DIR.parents[1]
+
 if str(WORKSPACE_ROOT) not in sys.path:
     sys.path.insert(0, str(WORKSPACE_ROOT))
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(SCRIPT_DIR))
-
-from models_suite.model4_oimhs_hole_cysts.oimhs_unet import OIMHSUNet
-from dataset import OIMHSDataset
+from models_suite.model1_oct5k_layers.unet_layers import RetinalLayersUNet
+from dataset import OCT5KLayersDataset
 import config
 
-OIMHS_CLASS_NAMES = [
-    "0. Background",
-    "1. Macular Hole",
-    "2. Choroid",
-    "3. Retina",
-    "4. Intraretinal Cysts (IRC)"
+LAYER_NAMES = [
+    "0. Background / Vitreous",
+    "1. Inner Retina (ILM -> OPL)",
+    "2. ONL / ELM (OPL -> IS-OS)",
+    "3. Ellipsoid Zone (IS-OS -> IBRPE)",
+    "4. RPE / Bruch's (IBRPE -> OBRPE)",
+    "5. Choroid / Sclera (OBRPE & below)"
 ]
 
-def compute_dice_iou(pred: np.ndarray, target: np.ndarray, num_classes: int = 5):
+def compute_dice_iou(pred: np.ndarray, target: np.ndarray, num_classes: int = 6):
     dice_per_class = []
     iou_per_class = []
     
@@ -54,21 +57,21 @@ def compute_dice_iou(pred: np.ndarray, target: np.ndarray, num_classes: int = 5)
         
     return dice_per_class, iou_per_class
 
-def validate_model4(checkpoint_path: str = None, num_samples_visualize: int = 5):
+def validate_model1(checkpoint_path: str = None, num_samples_visualize: int = 5):
     device = torch.device("mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu"))
     print(f"\n==========================================================================")
-    print(f"  COMPREHENSIVE MODULAR VALIDATION: MODEL 4 (OIMHS HOLE & CYSTS U-NET)    ")
+    print(f"   COMPREHENSIVE MODULAR VALIDATION: MODEL 1 (OCT5K 6-LAYER U-NET)       ")
     print(f"==========================================================================")
     print(f"Device: {device}")
 
     if checkpoint_path is None:
-        checkpoint_path = Path(config.CHECKPOINT_DIR) / "model4_oimhs_best.pth"
+        checkpoint_path = Path(config.CHECKPOINT_DIR) / "model1_oct5k_layers_best.pth"
 
     if not Path(checkpoint_path).exists():
         print(f"[Error] Checkpoint not found at: {checkpoint_path}")
         return
 
-    model = OIMHSUNet(in_channels=1, num_classes=config.NUM_CLASSES).to(device)
+    model = RetinalLayersUNet(in_channels=1, num_classes=config.NUM_CLASSES).to(device)
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
     
     if isinstance(ckpt, dict) and 'model_state_dict' in ckpt:
@@ -79,8 +82,8 @@ def validate_model4(checkpoint_path: str = None, num_samples_visualize: int = 5)
         print("Loaded model state dict directly.")
 
     model.eval()
-    dataset = OIMHSDataset(root_dir=config.DATASET_ROOT)
-    print(f"Validating on total {len(dataset)} OIMHS B-scan pairs...\n")
+    dataset = OCT5KLayersDataset(root_dir=config.DATASET_ROOT)
+    print(f"Validating on total {len(dataset)} OCT5K B-scan pairs...\n")
 
     output_dir = SCRIPT_DIR / "validation_outputs"
     output_dir.mkdir(exist_ok=True)
@@ -89,7 +92,7 @@ def validate_model4(checkpoint_path: str = None, num_samples_visualize: int = 5)
     all_iou = []
 
     with torch.no_grad():
-        for idx in tqdm(range(len(dataset)), desc="Evaluating Model 4"):
+        for idx in tqdm(range(len(dataset)), desc="Evaluating Model 1"):
             img_tensor, mask_tensor = dataset[idx]
             img_input = img_tensor.unsqueeze(0).to(device)
             
@@ -109,19 +112,19 @@ def validate_model4(checkpoint_path: str = None, num_samples_visualize: int = 5)
 
     # Save summary dataframe
     df = pd.DataFrame({
-        "Pathology_Class": OIMHS_CLASS_NAMES,
+        "Layer_Class": LAYER_NAMES,
         "Mean_Dice": mean_dice_per_class,
         "Mean_IoU": mean_iou_per_class
     })
     
-    csv_path = output_dir / "model4_oimhs_validation_metrics.csv"
+    csv_path = output_dir / "model1_layer_validation_metrics.csv"
     df.to_csv(csv_path, index=False)
 
     print("\n--------------------------------------------------------------------------")
-    print("                      MODEL 4 VALIDATION METRICS SUMMARY                  ")
+    print("                      MODEL 1 VALIDATION METRICS SUMMARY                  ")
     print("--------------------------------------------------------------------------")
-    for name, dice, iou in zip(OIMHS_CLASS_NAMES, mean_dice_per_class, mean_iou_per_class):
-        print(f"Class: {name:40s} | Dice: {dice * 100:.2f}% | IoU: {iou * 100:.2f}%")
+    for name, dice, iou in zip(LAYER_NAMES, mean_dice_per_class, mean_iou_per_class):
+        print(f"Layer: {name:40s} | Dice: {dice * 100:.2f}% | IoU: {iou * 100:.2f}%")
 
     overall_mdice = mean_dice_per_class.mean()
     overall_miou = mean_iou_per_class.mean()
@@ -149,36 +152,36 @@ def validate_model4(checkpoint_path: str = None, num_samples_visualize: int = 5)
 
         # Top-Left: Raw B-scan
         axes[0, 0].imshow(img_np, cmap="gray")
-        axes[0, 0].set_title(f"1. Raw OIMHS B-Scan (Sample #{idx+1})", fontsize=10, fontweight='bold')
+        axes[0, 0].set_title(f"1. Raw OCT B-Scan (Sample #{idx+1})", fontsize=10, fontweight='bold')
         axes[0, 0].axis("off")
 
-        # Top-Right: Ground Truth Mask
-        im_gt = axes[0, 1].imshow(mask_np, cmap="magma", vmin=0, vmax=4)
-        axes[0, 1].set_title("2. Ground Truth Mask (Hole/Cysts)", fontsize=10, fontweight='bold')
+        # Top-Right: Ground Truth Layer Mask
+        im_gt = axes[0, 1].imshow(mask_np, cmap="inferno", vmin=0, vmax=5)
+        axes[0, 1].set_title("2. Ground Truth Layer Mask (0-5)", fontsize=10, fontweight='bold')
         axes[0, 1].axis("off")
         fig.colorbar(im_gt, ax=axes[0, 1], fraction=0.046, pad=0.04)
 
-        # Bottom-Left: Predicted Mask
-        im_pred = axes[1, 0].imshow(preds, cmap="magma", vmin=0, vmax=4)
-        axes[1, 0].set_title("3. Predicted Mask (OIMHS U-Net)", fontsize=10, fontweight='bold')
+        # Bottom-Left: Predicted Layer Mask
+        im_pred = axes[1, 0].imshow(preds, cmap="inferno", vmin=0, vmax=5)
+        axes[1, 0].set_title("3. Predicted Layer Mask (U-Net)", fontsize=10, fontweight='bold')
         axes[1, 0].axis("off")
         fig.colorbar(im_pred, ax=axes[1, 0], fraction=0.046, pad=0.04)
 
         # Bottom-Right: Overlay
         img_rgb = cv2.cvtColor(img_np, cv2.COLOR_GRAY2RGB)
-        color_mask = plt.cm.get_cmap("rainbow")(preds / 4.0)[:, :, :3] * 255
+        color_mask = plt.cm.get_cmap("rainbow")(preds / 5.0)[:, :, :3] * 255
         overlay = (img_rgb * 0.4 + color_mask * 0.6).astype(np.uint8)
 
         axes[1, 1].imshow(overlay)
-        axes[1, 1].set_title("4. Pathology Color Overlay", fontsize=10, fontweight='bold')
+        axes[1, 1].set_title("4. Multi-Layer Color Overlay", fontsize=10, fontweight='bold')
         axes[1, 1].axis("off")
 
-        plt.suptitle(f"Model 4 Validation Result - Sample #{idx+1}", fontsize=12, fontweight='bold')
+        plt.suptitle(f"Model 1 Validation Result - Sample #{idx+1}", fontsize=12, fontweight='bold')
         plt.tight_layout()
-        plt.savefig(fig_dir / f"model4_val_sample_{idx+1}.png", dpi=120, bbox_inches='tight')
+        plt.savefig(fig_dir / f"model1_val_sample_{idx+1}.png", dpi=120, bbox_inches='tight')
         plt.close()
 
     print(f"Validation complete! Saved metrics to {csv_path}")
 
 if __name__ == "__main__":
-    validate_model4()
+    validate_model1()
