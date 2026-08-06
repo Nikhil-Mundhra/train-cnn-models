@@ -13,10 +13,13 @@ backend/oct_analyzer.db
 *.pth.tmp
 
 # Ignore model checkpoints
+checkpoints/
 image-classification-model-training/checkpoints/
 image-segmentation-model-training/checkpoints/
 image-segmentation-model-training/models_suite/
 *.pth
+scratch/
+
 
 # Ignore training logs and TensorBoard artifacts
 **/logs/**

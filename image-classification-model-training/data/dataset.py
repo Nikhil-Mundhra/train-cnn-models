@@ -395,3 +395,73 @@ def build_kfold_dataloaders(
         
     return fold_loaders
 
+
+class DICOMVolumeOCTDataset(Dataset):
+    """
+    PyTorch Dataset for 3D DICOM & Volumetric OCT files/directories.
+    Supports unrolling 3D volume slices into 2D tensors ('2d_slice' mode)
+    or yielding full 3D tensors ('3d_cube' mode).
+    """
+    def __init__(
+        self,
+        volume_paths: List[Union[str, Path]],
+        mode: str = "2d_slice",
+        transform = None,
+        resample_isotropic: bool = False,
+        target_spacing: float = 1.0,
+    ) -> None:
+        super().__init__()
+        self.volume_paths = [Path(p) for p in volume_paths]
+        self.mode = mode
+        self.transform = transform
+        self.resample_isotropic = resample_isotropic
+        self.target_spacing = target_spacing
+
+        # Build slice manifest for 2d_slice mode
+        self._manifest: List[Tuple[int, int]] = []
+        if self.mode == "2d_slice":
+            for v_idx, path in enumerate(self.volume_paths):
+                try:
+                    from core_ml.dicom_loader import load_dicom_volume
+                    vol, _ = load_dicom_volume(path)
+                    num_slices = vol.shape[0]
+                    for z_idx in range(num_slices):
+                        self._manifest.append((v_idx, z_idx))
+                except Exception as err:
+                    logger.warning(f"Could not index DICOM volume {path}: {err}")
+
+    def __len__(self) -> int:
+        if self.mode == "2d_slice":
+            return len(self._manifest)
+        return len(self.volume_paths)
+
+    def __getitem__(self, idx: int):
+        from core_ml.dicom_loader import load_dicom_volume, normalize_intensity, resample_volume_isotropic
+
+        if self.mode == "2d_slice":
+            v_idx, z_idx = self._manifest[idx]
+            vol_path = self.volume_paths[v_idx]
+            volume, spacing = load_dicom_volume(vol_path)
+            if self.resample_isotropic:
+                volume = resample_volume_isotropic(volume, spacing, self.target_spacing)
+            volume_norm = normalize_intensity(volume)
+
+            slice_idx = min(z_idx, volume_norm.shape[0] - 1)
+            slice_2d = volume_norm[slice_idx]
+            # Expand single grayscale slice to 3 channels (C, H, W)
+            tensor_2d = torch.from_numpy(slice_2d).unsqueeze(0).repeat(3, 1, 1)
+            if self.transform is not None:
+                tensor_2d = self.transform(tensor_2d)
+            return tensor_2d
+        else:
+            vol_path = self.volume_paths[idx]
+            volume, spacing = load_dicom_volume(vol_path)
+            if self.resample_isotropic:
+                volume = resample_volume_isotropic(volume, spacing, self.target_spacing)
+            volume_norm = normalize_intensity(volume)
+            tensor_3d = torch.from_numpy(volume_norm).unsqueeze(0)  # (1, Z, H, W)
+            if self.transform is not None:
+                tensor_3d = self.transform(tensor_3d)
+            return tensor_3d
+
+

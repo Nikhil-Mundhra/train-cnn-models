@@ -100,6 +100,11 @@ def parse_args():
                         help="Input image height/width resolution (default: 0 = auto-select per architecture)")
     parser.add_argument("--n-coarse-classes", type=int, default=3, help="Coarse segmentation classes for U-Net (default: 3)")
     parser.add_argument("--n-granular-classes", type=int, default=15, help="Granular segmentation classes for U-Net (default: 15)")
+    parser.add_argument("--data-format", type=str, default="image", choices=["image", "dicom"],
+                        help="Data ingestion format: 'image' for standard 2D formats, 'dicom' for 3D DICOM volumes (default: image)")
+    parser.add_argument("--volume-mode", type=str, default="2d_slice", choices=["2d_slice", "3d_cube"],
+                        help="Volume processing mode: '2d_slice' unrolls B-scans into 2D tensors, '3d_cube' yields 3D tensors (default: 2d_slice)")
+
 
     # --- Retained train_convnext.py Arguments ---
     default_config = str(CLS_TRAIN_DIR / "config" / "hierarchy.yaml") if (CLS_TRAIN_DIR / "config" / "hierarchy.yaml").exists() else "config/hierarchy.yaml"
