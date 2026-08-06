@@ -1,0 +1,8 @@
+[run]
+source = backend/oct_analyzer
+omit =
+    backend/tests/*
+
+[report]
+exclude_lines =
+    if __name__ == .__main__.:

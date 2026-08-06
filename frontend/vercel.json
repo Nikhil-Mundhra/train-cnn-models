@@ -1,0 +1,53 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "redirects": [
+    {
+      "source": "/docs",
+      "has": [
+        { "type": "query", "key": "doc", "value": "readme" }
+      ],
+      "destination": "/docs/readme?",
+      "statusCode": 308
+    },
+    {
+      "source": "/docs/",
+      "has": [
+        { "type": "query", "key": "doc", "value": "readme" }
+      ],
+      "destination": "/docs/readme?",
+      "statusCode": 308
+    },
+    {
+      "source": "/docs/readme",
+      "has": [
+        { "type": "query", "key": "doc", "value": "readme" }
+      ],
+      "destination": "/docs/readme?",
+      "statusCode": 308
+    },
+    {
+      "source": "/docs",
+      "has": [
+        { "type": "query", "key": "doc", "value": "implementation" }
+      ],
+      "destination": "/docs/implementation-info?",
+      "statusCode": 308
+    },
+    {
+      "source": "/docs/",
+      "has": [
+        { "type": "query", "key": "doc", "value": "implementation" }
+      ],
+      "destination": "/docs/implementation-info?",
+      "statusCode": 308
+    },
+    {
+      "source": "/docs/implementation-info",
+      "has": [
+        { "type": "query", "key": "doc", "value": "implementation" }
+      ],
+      "destination": "/docs/implementation-info?",
+      "statusCode": 308
+    }
+  ]
+}
