@@ -274,11 +274,12 @@ class MultiHeadConvNeXt(nn.Module):
             {"params": head_no_decay,     "lr": head_lr,     "weight_decay": 0.0},
         ]
 
-def build_multi_head_model(pretrained=True, warmup=True) -> MultiHeadConvNeXt:
+def build_multi_head_model(pretrained=True, warmup=True, backbone_name="convnextv2_base") -> MultiHeadConvNeXt:
     """
-    Factory function for creating the Multi-Head ConvNeXt model.
+    Factory function for creating the Multi-Head ConvNeXt model with a customizable backbone.
     """
-    model = MultiHeadConvNeXt(num_pathology_classes=12, pretrained=pretrained)
+    model = MultiHeadConvNeXt(num_pathology_classes=12, pretrained=pretrained, backbone_name=backbone_name)
     if warmup:
         model.freeze_full_backbone()
     return model
+

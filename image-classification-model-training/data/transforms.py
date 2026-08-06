@@ -138,17 +138,18 @@ class Rotate90Clockwise(Transform):
         except Exception:
             return img
 
-def get_train_transforms():
+def get_train_transforms(img_size: int | tuple = 384):
     """
     Standard training augmentation pipeline using MONAI for Classified-preprocessed.
     """
+    h_w = (img_size, img_size) if isinstance(img_size, int) else img_size
     return Compose([
         LoadImage(image_only=True),
         EnsureChannelFirst(),
         CLAHETransform(),
         Ensure3Channels(),
         ScaleIntensity(), # Scale [0, 255] -> [0, 1]
-        Resize(RES_H_W),
+        Resize(h_w),
         RandFlip(prob=0.5, spatial_axis=1), # Horizontal flip only (Preserves Vitreous -> RPE superior-inferior anatomical ordering)
         RandRotate(range_x=0.09, prob=0.5, keep_size=True), # Small ~5 degree anatomical tilt rotation
         RandGaussianNoise(prob=0.3, std=0.05),
@@ -156,29 +157,31 @@ def get_train_transforms():
         RandCoarseDropout(holes=1, spatial_size=(32, 32), dropout_holes=True, fill_value=0, prob=0.2)
     ])
 
-def get_val_transforms():
+def get_val_transforms(img_size: int | tuple = 384):
     """
     Deterministic validation/test pipeline using MONAI for Classified-preprocessed.
     """
+    h_w = (img_size, img_size) if isinstance(img_size, int) else img_size
     return Compose([
         LoadImage(image_only=True),
         EnsureChannelFirst(),
         CLAHETransform(),
         Ensure3Channels(),
         ScaleIntensity(),
-        Resize(RES_H_W),
+        Resize(h_w),
         NormalizeIntensity(subtrahend=IMAGENET_MEAN, divisor=IMAGENET_STD, channel_wise=True)
     ])
 
-def get_transforms(mode_or_split: str = "train", split: str = None) -> Compose:
+def get_transforms(mode_or_split: str = "train", split: str = None, img_size: int | tuple = 384) -> Compose:
     """
     Returns the MONAI transforms pipeline.
-    Supports legacy two-arg call (mode, split) and new single-arg call (split).
+    Supports legacy two-arg call (mode, split) and new single-arg call (split) with dynamic image size.
     """
     actual_split = split if split is not None else mode_or_split
     if actual_split not in ["train", "val"]:
         raise ValueError(f"Unknown split: '{actual_split}'. Use 'train' or 'val'.")
     
     if actual_split == "train":
-        return get_train_transforms()
-    return get_val_transforms()
+        return get_train_transforms(img_size=img_size)
+    return get_val_transforms(img_size=img_size)
+

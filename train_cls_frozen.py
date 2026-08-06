@@ -14,7 +14,7 @@ local_path = str(Path(__file__).resolve().parent / "image-segmentation-model-tra
 sys.path.insert(0, local_path)
 
 # Import model
-from backend.core_ml.segmentation.models.unet import HierarchicalUNet
+from core_ml.segmentation.models.unet import HierarchicalUNet
 import torchvision.transforms as transforms
 from PIL import Image
 

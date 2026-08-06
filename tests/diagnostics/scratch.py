@@ -1,5 +1,5 @@
 import numpy as np
-from backend.core_ml.segmentation.inference.analyzer import SegmentationAnalyzer
+from core_ml.segmentation.inference.analyzer import SegmentationAnalyzer
 
 # Generate dummy mask and test analyzer
 mask = np.zeros((512, 512), dtype=np.uint8)

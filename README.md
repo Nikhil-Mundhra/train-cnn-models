@@ -1,193 +1,124 @@
----
-name: oct-analyser-agent-skill
-description: "Comprehensive guide and agent skill for navigating, modifying, and understanding the OCT-Analyser-Capstone repository."
----
+# Train CNN Models Suite
 
-# Local OCT Analyzer MVP
+A unified PyTorch deep learning framework for training, evaluating, and validating Convolutional Neural Networks (CNNs) on Optical Coherence Tomography (OCT) retinal images.
 
-Local OCT Analyzer MVP is a full-stack, local-first OCT/OCTA clinical workflow prototype. It combines a **FastAPI backend**, a **React wireframe-style clinical interface**, and a **Python OCT processing pipeline** for loading, preprocessing, flattening, previewing, and feature-extracting both **3D Optical Coherence Tomography (OCT) volumes** and **2D images**.
-
-This file serves as both the **main project documentation** and a **Skill for AI Agents** assisting with the codebase. 
+This framework unifies **Hierarchical Retinal Layer & Lesion Segmentation** (U-Net architectures) and **Multi-Level Disease Classification** (ConvNeXt, ResNet, EfficientNet, DenseNet, Swin, ViT) into a single CLI training engine (`train.py`).
 
 ---
 
-## Project Structure
+## Architectural Principles
+
+1. **Shared Encoder Architecture:** Extracts universal representation features across medical imaging tasks.
+2. **Multi-Scale Encoder Aggregation:** Feature maps from multiple encoder depths (e.g. stages 2, 3, 4) are pooled directly into classification heads to retain fine spatial details lost at the bottleneck.
+3. **Strict Hierarchical Conditioning:** Cascaded feature propagation enforces Level 2 (Pathology Category) conditioned on Level 1 (Normal/Abnormal) probabilities, preventing contradictory predictions.
+4. **Decoupled Decoder:** The segmentation decoder operates independently to predict retinal tissue boundaries without feeding back into classification, preventing catastrophic failure on unseen pathologies.
+5. **Medical Augmentation Constraints:** Enforces **Segmentation-Driven Cropping** (isolating retinal tissue while zeroing out background scanner artifacts) over destructive spatial crops (`RandomResizedCrop`).
+
+---
+
+## Codebase Navigation
 
 ```text
-OCT-Analyser-Capstone/
-├── .github/
-│   └── workflows/
-│       └── pytest.yml          # GitHub Actions test workflow
-├── backend/                    # FastAPI backend and Pipeline
-│   ├── Dockerfile
-│   ├── pytest.ini
-│   ├── requirements.txt
-│   ├── oct_analyzer/           # Core ingestion, pipeline, and API 
-│   └── tests/
-├── frontend/                   # Next.js interface (clinical UI)
-│   ├── index.html
-│   ├── package.json
-│   └── src/
-├── image-classification-model-training/
-│   ├── Documentation/
-│   ├── models/
-│   └── training/
-├── image-segmentation-model-training/
-│   ├── Documentation/
-│   ├── models/
-│   └── scripts/
-├── OCT-Segmentation-Model/
-│   ├── main.py                 # 15-layer Hierarchical U-Net inference
-│   └── models/
-└── vercel.json                 # Vercel deployment configuration
-```
-
-## Current Capabilities
-
-### Backend and Pipeline
-- Load Heidelberg `.vol` files with `eyepy`.
-- Load DICOM `.dcm` files and extract pixel data, rescale metadata, and spacing.
-- Load zipped image-stack exports containing sorted TIFF/BMP/PNG slices.
-- Load 2D standard images (`.png`, `.jpg`, `.jpeg`, `.webp`, `.tif`, `.bmp`) leveraging `PIL` for single-scan analysis.
-- Normalize all MVP uploads into a shared `(Z, Y, X)` NumPy volume contract.
-- Flatten OCT stacks relative to the retinal pigment epithelium (RPE).
-- Run basic QC reporting: signal range, crop status, warnings, volume shape, source format, and metadata.
-- Generate preview images for raw center slice, cropped slice, segmentation overlay, and CDF feature chart.
-- Support 2D segmentation natively via PyTorch UNet models and classify using ResNet/EfficientNet models.
-- **Generate deterministic demo 12-layer segmentation** for the MVP pipeline (with a clear upgrade path to the trained **15-layer Hierarchical U-Net model**).
-
-### Local API
-- `POST /api/scans` uploads one `.vol`, `.dcm`, `.zip` export, or a 2D image.
-- `GET /api/scans/{scan_id}` returns status, diagnosis, confidence, QC, metadata, layer votes, CDF deciles, and preview URLs.
-- `POST /api/segment_2d` runs a localized 2D segmentation script, invoking the trained 15-layer Hierarchical U-Net checkpoint.
-
-### Frontend
-- Uses the clinical wireframe-style interface as the main app at `http://127.0.0.1:3000`.
-- Includes triage worklist, upload/QC, scan review, AI findings, human decision gate, and outcomes/audit screens.
-- Upload/QC screen allows dragging/dropping of 3D volumes or 2D image datasets.
-- Review screen displays generated scan previews and layer findings with dynamic SVG overlays for clinical evidence.
-
-## Roadmap & Future Promises (To Be Delivered)
-
-The application currently acts as a strong foundational MVP, but there are major components scheduled for future deployment:
-- **Clinical Validation:** The app must undergo formal clinical trials and robust accuracy evaluations; it cannot currently be used for real patient diagnosis.
-- **Trained 15-Layer Anatomical Segmentation:** The MVP currently uses a 12-layer deterministic placeholder. We will fully integrate our newly developed **15-layer Hierarchical U-Net model** (located in `OCT-Segmentation-Model/`) for robust anatomical structure extraction in the 3D pipeline.
-- **Live Classification Inference:** 
-  > **[WARNING] The live classification pipeline is currently running with a RANDOMLY INITIALIZED ConvNeXt V2 model because the trained weights (`multi_head.pth`) are missing from the `hf_space/weights/` directory.** The legacy models were only partially trained (last layers only). A full training run on real OCT data is required before classification outputs can be trusted.
-- **Background Jobs & Database Persistence:** Very large scans will soon require a background job queue (e.g., Celery/Redis). Currently, scan state only lives in the local filesystem/process memory.
-- **Enterprise Capabilities:** Future releases will introduce PDF report generation, HIPAA-compliant access controls, user authentication, and audit-grade clinical logging.
-- **Proprietary Archive Support:** Expanding beyond standard `.dcm` and `.vol`, future ingestion targets may include reverse-engineering proprietary Solix archives (e.g. `.fds`).
-
-## Requirements
-
-- Python 3.11+
-- PyTorch, MONAI, NumPy, SciPy, SimpleITK, eyepy
-- FastAPI, Uvicorn, Pillow
-- Next.js, React, Tailwind CSS v4
-- pytest and pytest-cov for tests
-
-Install dependencies:
-```bash
-python -m pip install --upgrade pip
-pip install -r backend/requirements.txt
-npm --prefix frontend install
-```
-
-## Usage
-
-### Local MVP App
-
-Run the full local MVP (Frontend, Backend, and Celery worker) from a fresh checkout with one command:
-```bash
-./start.sh
-```
-That script installs dependencies, boots up the Next.js frontend, the FastAPI backend, and the Redis-backed Celery worker concurrently, while tailing their outputs from the `logs/` directory.
-
-Useful Make targets:
-```bash
-make install  # install Python and Node dependencies
-make build    # build the frontend bundle
-make test     # run the Python test suite
-make clean    # remove runtime/cache artifacts
-```
-
-## Live Deployments (Vercel & Hugging Face)
-
-### 1. Frontend (Vercel)
-The repository uses Vercel's native Next.js integration. The Next.js frontend builds natively and handles routing, served from the edge/serverless functions. The static UI is deployed and live at:
-[https://oct-analyser-capstone.vercel.app](https://oct-analyser-capstone.vercel.app)
-
-To connect the hosted UI to a locally running backend, append the local backend API base URL:
-```text
-https://oct-analyser-capstone.vercel.app/?apiBase=http://127.0.0.1:8000
-```
-
-### 2. Model Inference (Hugging Face Spaces)
-The heavy PyTorch and ML inference tasks are deployed as remote microservices on **Hugging Face Spaces**. The frontend client is configured to automatically communicate with these cloud deployments for Live AI findings:
-*   **Classification Service**: [https://nmundhra-oct-image-classifier-model.hf.space](https://nmundhra-oct-image-classifier-model.hf.space)
-*   **Segmentation Service**: [https://nmundhra-oct-segmentation-model.hf.space](https://nmundhra-oct-segmentation-model.hf.space)
-
-## Testing & Docker
-
-Run the test suite:
-```bash
-pytest -c backend/pytest.ini backend/tests
-```
-
-Build and run Docker image:
-```bash
-docker build -f backend/Dockerfile -t relaynet-3d .
-docker run --rm relaynet-3d python -m backend.oct_analyzer.main
+train-cnn-models/
+├── train.py                             # Unified Master Training CLI Application
+├── Makefile                             # Build, training, and diagnostic test commands
+├── README.md                            # Primary documentation guide
+├── pytest.ini                           # Pytest configuration
+├── docs/                                # Technical documentation suite
+│   ├── CLI_REFERENCE.md                 # Complete train.py argument reference
+│   ├── ARCHITECTURE.md                  # Unified network design & loss formulations
+│   ├── MODEL_ZOO.md                     # Supported backbones & resolution contracts
+│   ├── DATA_AND_AUGMENTATIONS.md        # Medical augmentations & dataset mapping
+│   └── KAGGLE_COLAB_GUIDE.md            # Cloud GPU training & HuggingFace Hub backup guide
+├── core_ml/                             # Core PyTorch architectures & analyzers
+│   ├── classification/                  # Multi-head ConvNeXt, Grad-CAM & device managers
+│   └── segmentation/                    # 15-Layer Hierarchical U-Net & analyzers
+├── image-classification-model-training/ # Disease classification pipeline (configs & data loaders)
+├── image-segmentation-model-training/   # Layer & lesion segmentation pipeline
+├── model_training/                      # Detailed model training experiment setups
+├── models_suite/                        # Trained model suite architecture definitions
+├── scripts/                             # Notebooks for Kaggle and Colab training
+├── tests/                               # Battery of diagnostic tests for model health
+├── train_cls_frozen.py                  # Frozen-encoder training script
+├── generate_final_validation_csv.py     # Suite validation metrics calculation script
+└── diagnostics_report.md                # Automated model health diagnostic report
 ```
 
 ---
 
-## Developer & Architecture Guide (Including AI Agent Skill Context)
+## Quickstart
 
-If you are a new developer or an AI agent analyzing this repository, read this section carefully to understand the domain, architecture, data schemas, and implementation blueprint.
+### 1. Environment Setup
 
-### 1. Domain Context
-*   **OCT / OCTA**: Optical Coherence Tomography. These are volumetric medical scans of the retina.
-*   **Volumetric Data (3D)**: Scans come as a 3D block of data (a stack of individual 2D cross-sectional images called B-scans). The project normalizes these to a `(Z, Y, X)` NumPy/PyTorch array.
-*   **2D Image Data**: The system can also ingest single 2D scans/images. They are loaded and converted into a `(1, Y, X)` normalized array for standard processing, or handled via specific 2D endpoints (e.g., `/api/segment_2d`).
-*   **Medical Formats**: The system ingests `.vol` (Heidelberg), `.dcm` (DICOM, via `pydicom`), `.zip` (TIFF/BMP/PNG stacks), and standard 2D images (`.png`, `.jpg`, `.jpeg`, `.webp`, `.tif`, `.tiff`, `.bmp`). 
+Requirements: Python 3.10+, PyTorch 2.0+ (CUDA or Apple Silicon MPS).
 
-### 2. Codebase Architecture & Features
-*   **`backend/` (FastAPI / PyTorch)**:
-    *   **Data Ingestion (`oct_analyzer/data_loader.py`)**: Uses `eyepy`, `pydicom`, and `PIL` to extract raw pixels and spatial metadata (`Spacing`). Returns a normalized 3D array (even for 2D images).
-    *   **Pipeline (`oct_analyzer/mvp_pipeline.py`)**: Responsible for:
-        1. Fovea detection and auto-cropping (standardizing scan dimensions).
-        2. RPE-based anatomical flattening.
-        3. Feature extraction: Calculates **MGRF** (2nd-order reflectivity Gibbs energy) and extracts **CDF** (Cumulative Distribution Function) deciles.
-        4. Classification.
-    *   **API (`oct_analyzer/api.py`)**: Exposes `/api/scans` (upload), `/api/segment_2d` (2D UNet predictions), and preview endpoints.
-*   **`frontend/` (Next.js / React)**:
-    *   Provides a clinical drag-and-drop workflow. 
-    *   **`src/app/`**: Core Next.js routing (Worklist, QC, Review, Human Decision Gate, Outcomes). Implements SVG overlays for segmentation masks (e.g. IRF, SRF lesions).
-    *   **`src/api/octAnalyzerClient.js`**: Frontend API client.
-*   **`OCT-Segmentation-Model/`** & **`image-classification-model-training/`**: 
-    *   Standalone ML repositories for training the models.
-    *   Classification utilizes a **Unified Multi-Head ConvNeXt V2** model. A shared feature backbone extracts global representations, which then feed into three specialized heads: **Head 1** (Normal vs. Abnormal), **Head 2** (5 Broad Pathology Families), and **Head 3** (11 Granular Biomarkers/Severities).
-    *   **Segmentation utilizes a custom 15-layer Hierarchical U-Net model** (`n_granular_classes=15`, `n_coarse_classes=3`) trained in PyTorch. The inference API for this model is located in `OCT-Segmentation-Model/main.py`.
+```bash
+make venv
+make install
+```
 
-### 3. Detailed ML Documentation
-To delve deeper into the training procedures, architectures, and datasets, refer to the detailed documentation in each respective ML module:
+### 2. Run Diagnostic Battery Tests
 
-*   **Classification Model Docs (`image-classification-model-training/Documentation/`)**:
-    *   [Architecture](file:///Users/nikhilmundhra/Documents/Github/OCT-Analyser-Capstone/image-classification-model-training/Documentation/architecture.md)
-    *   [Data Pipeline](file:///Users/nikhilmundhra/Documents/Github/OCT-Analyser-Capstone/image-classification-model-training/Documentation/data_pipeline.md)
-    *   [Dataset Info](file:///Users/nikhilmundhra/Documents/Github/OCT-Analyser-Capstone/image-classification-model-training/Documentation/dataset.md)
-    *   [Training Guide](file:///Users/nikhilmundhra/Documents/Github/OCT-Analyser-Capstone/image-classification-model-training/Documentation/training.md)
-*   **Segmentation Model Docs (`image-segmentation-model-training/Documentation/`)**:
-    *   [API Reference](file:///Users/nikhilmundhra/Documents/Github/OCT-Analyser-Capstone/image-segmentation-model-training/Documentation/api_reference.md)
-    *   [Architecture](file:///Users/nikhilmundhra/Documents/Github/OCT-Analyser-Capstone/image-segmentation-model-training/Documentation/architecture.md)
-    *   [Training Guide](file:///Users/nikhilmundhra/Documents/Github/OCT-Analyser-Capstone/image-segmentation-model-training/Documentation/training_guide.md)
+Verify model tensor scaling, bias, and Grad-CAM explainability outputs:
+```bash
+make test
+```
 
-### 4. Data Schemas
-*   **`NormalizedScan`**: Standard internal representation. Contains `volume` (Z, Y, X array), `spacing_mm`, `source_format`, and `metadata`.
-*   **`ScanResult`**: API response schema. Contains `diagnosis`, `confidence`, `qc` (signal range, crop bounds), `layers` (layer votes, score, cdf deciles), `previews` (URLs), and `segmentation` polygons.
+### 3. Run Pipeline Smoke Test
 
-### 5. Code Modification Rules
-1.  **Do not modify clinical diagnostic rules** without explicit user confirmation.
-2.  **Maintain separation of concerns**: Backend handles all heavy lifting (ML, Array manipulation, OpenCV/PyTorch), Frontend is strictly a UI layer consuming JSON/Images.
-3.  Ensure 100% test coverage for the backend (`pytest.ini`).
+Execute a fast 1-epoch smoke test on the unified training application:
+```bash
+make smoke-test
+```
+
+---
+
+## CLI Training Application (`train.py`)
+
+All training tasks are driven through `train.py`.
+
+### Basic Multi-Head Classification
+```bash
+python3 train.py --task multi_head --arch convnextv2_base --batch-size 32
+```
+
+### Alternative Backbone (ResNet-50)
+```bash
+python3 train.py --task multi_head --arch resnet50 --img-size 224
+```
+
+### Hierarchical U-Net Segmentation
+```bash
+python3 train.py --task segmentation --arch hierarchical_unet --img-size 512
+```
+
+### Fine-Tuning & Multi-GPU Training
+```bash
+python3 train.py \
+  --arch convnext_small \
+  --epochs-warmup 5 \
+  --epochs-finetune 15 \
+  --lr-head 1e-4 \
+  --lr-backbone 1e-6 \
+  --use-weighted-sampler \
+  --hf-repo username/oct-convnext-checkpoint
+```
+
+For full CLI parameter documentation, see [CLI Reference](file:///Users/nikhilmundhra/Documents/Github/train-cnn-models/docs/CLI_REFERENCE.md).
+
+---
+
+## Documentation Index
+
+- [CLI Reference](file:///Users/nikhilmundhra/Documents/Github/train-cnn-models/docs/CLI_REFERENCE.md): Complete parameter reference for `train.py`.
+- [Architecture Guide](file:///Users/nikhilmundhra/Documents/Github/train-cnn-models/docs/ARCHITECTURE.md): Network design, loss functions, and hierarchical features.
+- [Model Zoo](file:///Users/nikhilmundhra/Documents/Github/train-cnn-models/docs/MODEL_ZOO.md): Supported classification backbones and U-Net segmenters.
+- [Augmentation & Data Guide](file:///Users/nikhilmundhra/Documents/Github/train-cnn-models/docs/DATA_AND_AUGMENTATIONS.md): Medical augmentation rules, MONAI pipelines, and dataset configuration.
+- [Kaggle & Colab Guide](file:///Users/nikhilmundhra/Documents/Github/train-cnn-models/docs/KAGGLE_COLAB_GUIDE.md): Remote GPU execution, HuggingFace Hub sync, and multi-GPU DDP setup.
+
+---
+
+## Environment Variables
+
+- `OCT_LOCAL_DEVICE`: Override compute device selection (`cpu`, `mps`, `cuda`, or `auto`). Default is `auto`.
+- `OCT_DATA_ROOT`: Root path to the preprocessed dataset directory.
