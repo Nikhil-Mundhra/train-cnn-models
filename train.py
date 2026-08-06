@@ -87,7 +87,7 @@ def resolve_image_size(arch: str, requested_size: int) -> int:
     arch_lower = arch.lower()
     return DEFAULT_IMAGE_SIZES.get(arch_lower, 224)
 
-def parse_args():
+def parse_args(args=None):
     parser = argparse.ArgumentParser(description="Unified CNN Model Training Application")
     
     # --- Selection Arguments ---
@@ -129,7 +129,7 @@ def parse_args():
     parser.add_argument("--use-ddp", action="store_true", help="Enable PyTorch DistributedDataParallel")
     parser.add_argument("--use-weighted-sampler", action="store_true", help="Enable WeightedRandomSampler for class balancing")
 
-    return parser.parse_args()
+    return parser.parse_args(args)
 
 def main():
     args = parse_args()

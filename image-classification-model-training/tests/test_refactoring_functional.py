@@ -30,7 +30,8 @@ class TestRefactoringFunctional(unittest.TestCase):
 
     def test_train_convnext_cli_help(self):
         """Verify train_convnext.py script in scripts/ executes --help clean without import errors."""
-        train_script = os.path.join(self.scripts_dir, "train_convnext.py")
+        root_dir = os.path.dirname(self.base_dir)
+        train_script = os.path.join(root_dir, "train.py")
         env = os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = ""  # Force CPU execution
         
@@ -40,8 +41,8 @@ class TestRefactoringFunctional(unittest.TestCase):
             text=True,
             env=env
         )
-        self.assertEqual(result.returncode, 0, f"train_convnext.py --help failed with stderr: {result.stderr}")
-        self.assertIn("Train Multi-Head ConvNeXt", result.stdout)
+        self.assertEqual(result.returncode, 0, f"train.py --help failed with stderr: {result.stderr}")
+        self.assertIn("Unified CNN Model Training", result.stdout)
 
     def test_evaluate_best_model_imports(self):
         """Verify evaluate_best_model.py in scripts/ can be imported cleanly."""
