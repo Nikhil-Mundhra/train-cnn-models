@@ -153,3 +153,74 @@ To segment an entire 320-slice DICOM volume and visualize the 3D surface model i
 This generates:
 1. `*_rnfl_pred.npz`: Compressed 3D binary labelmap `(320 x 768 x 320)`.
 2. `view_prediction_in_slicer.py`: Script that launches 3D Slicer, loads the master OCT volume, imports the predicted RNFL layer, and generates the closed 3D surface mesh.
+
+---
+
+## 6. Running Training on NYUAD HPC (Jubail Cluster)
+
+For high-throughput training across large volumes, the training job can be submitted to the NYUAD Jubail HPC cluster using SLURM and NVIDIA GPU acceleration.
+
+### Cluster Guidelines (HPC Admin Policy)
+* **Data Storage (`/scratch/`)**: All high-throughput training datasets and checkpoints **must** reside in `/scratch/<NetID>/`. The `/home` directory has strict quota limits and must not store training volumes.
+* **Code & Scripts (`/home/`)**: Repositories and scripts reside in `/home/<NetID>/train-cnn-models`.
+* **Partition**: Request the **`nvidia`** partition for GPU jobs.
+* **Modules**: Modules must be loaded via Lmod (`module purge`, `module load miniconda`).
+
+### Step 1: Transfer Dataset to Jubail Scratch
+From your local terminal, transfer the deidentified Box directory directly to your Jubail scratch directory:
+```bash
+# Replace <NetID> with your NYU NetID (e.g. nm1234)
+rsync -avP /Users/nikhilmundhra/Library/CloudStorage/Box-Box/deidentified/ \
+    <NetID>@jubail.abudhabi.nyu.edu:/scratch/<NetID>/deidentified/
+```
+
+### Step 2: Clone/Pull the Repository in Home
+SSH into Jubail:
+```bash
+ssh <NetID>@jubail.abudhabi.nyu.edu
+```
+
+Clone the repository into your home directory (or pull latest changes):
+```bash
+cd ~
+git clone https://github.com/Nikhil-Mundhra/train-cnn-models.git
+# or if already cloned:
+cd ~/train-cnn-models && git pull origin main
+```
+
+### Step 3: Set Up the Conda Environment on Jubail
+```bash
+module purge
+module load miniconda
+conda create -n oct python=3.10 -y
+conda activate oct
+
+# Install PyTorch with CUDA and required dependencies
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+pip install monai pydicom pandas scipy
+```
+
+### Step 4: Submit the SLURM Batch Job
+Submit [`train_rnfl_jubail.slurm`](file:///Users/nikhilmundhra/Documents/Github/Capstone/train-cnn-models/model_training/train_rnfl_volumetric/train_rnfl_jubail.slurm):
+```bash
+cd ~/train-cnn-models/model_training/train_rnfl_volumetric
+sbatch train_rnfl_jubail.slurm
+```
+
+### Step 5: Monitor the Job
+```bash
+# Check job queue status
+squeue -u $USER
+
+# Follow the live training logs
+tail -f slurm_rnfl_*.out
+```
+
+### Step 6: Retrieve Checkpoints to Local Machine
+Once training completes, copy the best model weights back to your local machine:
+```bash
+# Run on your local machine:
+mkdir -p ./checkpoints/jubail_run
+rsync -avP <NetID>@jubail.abudhabi.nyu.edu:/scratch/<NetID>/checkpoints/rnfl_volumetric_*/best_volumetric_rnfl_net.pt ./checkpoints/jubail_run/
+```
+
