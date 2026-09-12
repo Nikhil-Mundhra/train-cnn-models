@@ -23,40 +23,20 @@ echo "=== Job ID: ${SLURM_JOB_ID} | Allocated GPU: ${CUDA_VISIBLE_DEVICES} ==="
 echo "=================================================================="
 
 # ----------------------------------------------------------------------
-# 1. Environment & Module Setup (NYUAD Lmod)
+# 1. Environment & Module Setup (NYUAD Lmod Singularity)
 # ----------------------------------------------------------------------
-# Load Python / Conda on Jubail
 module purge
-module load miniconda || module load python/3.10 || true
-
-# Initialize conda for bash subshell
-if command -v conda &> /dev/null; then
-    eval "$(conda shell.bash hook)"
-elif [ -f "${HOME}/miniconda3/etc/profile.d/conda.sh" ]; then
-    source "${HOME}/miniconda3/etc/profile.d/conda.sh"
-elif [ -f "/share/apps/miniconda3/etc/profile.d/conda.sh" ]; then
-    source "/share/apps/miniconda3/etc/profile.d/conda.sh"
-fi
-
-# Activate Conda environment
-if conda info --envs 2>/dev/null | grep -q "oct"; then
-    conda activate oct
-elif [ -d "${HOME}/.conda/envs/oct" ]; then
-    conda activate "${HOME}/.conda/envs/oct"
-elif [ -d "${HOME}/miniconda3/envs/oct" ]; then
-    conda activate "${HOME}/miniconda3/envs/oct"
-elif [ -d "${HOME}/env_rnfl" ]; then
-    source "${HOME}/env_rnfl/bin/activate"
-fi
-
+module load singularity
 
 # ----------------------------------------------------------------------
-# 2. Paths Configuration (Data on Scratch, Code in Home)
+# 2. Paths Configuration (Data & Container on Scratch, Code in Home)
 # ----------------------------------------------------------------------
-# Soumen's Rule: Data MUST live on fast parallel /scratch filesystem,
-# code and repositories live in /home.
+# Soumen's Rule: Data and containers MUST live on fast parallel /scratch
+# filesystem. Code and repositories live in /home.
 NETID="${USER}"
 SCRATCH_DIR="/scratch/${NETID}"
+IMAGE_DIR="${SCRATCH_DIR}/singularityimages"
+SINGULARITY_IMG="${SINGULARITY_IMG:-${IMAGE_DIR}/monai.sif}"
 DATASET_ROOT="${SCRATCH_DIR}/deidentified"
 CHECKPOINT_DIR="${SCRATCH_DIR}/checkpoints/rnfl_volumetric_${SLURM_JOB_ID}"
 OUTPUT_DIR="${SCRATCH_DIR}/predictions_${SLURM_JOB_ID}"
@@ -64,46 +44,71 @@ OUTPUT_DIR="${SCRATCH_DIR}/predictions_${SLURM_JOB_ID}"
 REPO_DIR="${HOME}/train-cnn-models"
 SCRIPT_PATH="${REPO_DIR}/model_training/train_rnfl_volumetric/train.py"
 
+mkdir -p "${IMAGE_DIR}"
 mkdir -p "${CHECKPOINT_DIR}"
 mkdir -p "${OUTPUT_DIR}"
 
-echo "User:           ${NETID}"
-echo "Dataset Root:   ${DATASET_ROOT}"
-echo "Checkpoint Dir: ${CHECKPOINT_DIR}"
-echo "Code Location:  ${REPO_DIR}"
+# ----------------------------------------------------------------------
+# 3. Ensure Container Image Exists (Zero pip install required)
+# ----------------------------------------------------------------------
+# Official MONAI GPU container bundles PyTorch (CUDA), MONAI, SciPy,
+# NumPy, Pandas and pydicom directly into a single immutable SIF image.
+if [ ! -f "${SINGULARITY_IMG}" ]; then
+    echo "=================================================================="
+    echo "[INFO] Singularity image not found at ${SINGULARITY_IMG}"
+    echo "[INFO] Pulling official MONAI/PyTorch CUDA container to scratch..."
+    echo "=================================================================="
+    export SINGULARITY_CACHEDIR="${SCRATCH_DIR}/.singularity_cache"
+    export SINGULARITY_TMPDIR="${SCRATCH_DIR}/.singularity_tmp"
+    mkdir -p "${SINGULARITY_CACHEDIR}" "${SINGULARITY_TMPDIR}"
+    singularity pull "${SINGULARITY_IMG}" docker://projectmonai/monai:latest
+fi
+
+echo "User:            ${NETID}"
+echo "Dataset Root:    ${DATASET_ROOT}"
+echo "Singularity Img: ${SINGULARITY_IMG}"
+echo "Checkpoint Dir:  ${CHECKPOINT_DIR}"
+echo "Code Location:   ${REPO_DIR}"
 
 # Check dataset presence
 if [ ! -d "${DATASET_ROOT}" ]; then
     echo "[ERROR] Dataset not found at ${DATASET_ROOT}!"
-    echo "Please rsync or copy your 'deidentified' dataset to /scratch/${NETID}/deidentified before submitting."
+    echo "Please rsync your 'deidentified' dataset to /scratch/${NETID}/deidentified before running."
     exit 1
 fi
 
-# Check CUDA availability
-python -c "import torch; print('PyTorch Version:', torch.__version__, '| CUDA Available:', torch.cuda.is_available(), '| Device Name:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None')"
+# Verify CUDA within Singularity container
+singularity exec --nv \
+    --bind /scratch:/scratch \
+    "${SINGULARITY_IMG}" \
+    python3 -c "import torch; print('Container PyTorch:', torch.__version__, '| CUDA Available:', torch.cuda.is_available(), '| Device Name:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None')"
 
 # ----------------------------------------------------------------------
-# 3. Launch Multi-Epoch Training on GPU
+# 4. Launch Multi-Epoch Training on GPU inside Container
 # ----------------------------------------------------------------------
 echo "=================================================================="
-echo "=== Launching Multi-Epoch Volumetric RNFL Training             ==="
+echo "=== Launching Volumetric RNFL Training in Singularity (--nv)   ==="
 echo "=================================================================="
 
-python "${SCRIPT_PATH}" \
-    --dataset_root "${DATASET_ROOT}" \
-    --val_subjects "BEH0335,BEH0314" \
-    --epochs 15 \
-    --batch_size 8 \
-    --accum_steps 2 \
-    --lr 3e-4 \
-    --weight_decay 1e-4 \
-    --context_slices 5 \
-    --num_workers 4 \
-    --device "cuda" \
-    --checkpoint_dir "${CHECKPOINT_DIR}" \
-    --log_interval 50
+singularity exec --nv \
+    --bind /scratch:/scratch \
+    "${SINGULARITY_IMG}" \
+    python3 "${SCRIPT_PATH}" \
+        --dataset_root "${DATASET_ROOT}" \
+        --val_subjects "BEH0335,BEH0314" \
+        --epochs 15 \
+        --batch_size 8 \
+        --accum_steps 2 \
+        --lr 3e-4 \
+        --weight_decay 1e-4 \
+        --context_slices 5 \
+        --num_workers 4 \
+        --device "cuda" \
+        --checkpoint_dir "${CHECKPOINT_DIR}" \
+        --log_interval 50
 
 echo "=================================================================="
 echo "=== Training Completed Successfully at $(date) ==="
 echo "=== Checkpoints saved to: ${CHECKPOINT_DIR} ==="
 echo "=================================================================="
+
