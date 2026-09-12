@@ -158,80 +158,55 @@ This generates:
 
 ## 6. Running Training on NYUAD HPC (Jubail Cluster)
 
-For high-throughput training across large volumes, the training job runs on the NYUAD Jubail HPC cluster using SLURM, NVIDIA GPU acceleration, and **Singularity containers** (no `pip install` needed).
+Training runs directly on the NYUAD Jubail HPC cluster using SLURM, NVIDIA GPU acceleration, and **Jubail's pre-installed `monai/0.8.0` module** (zero `pip install`, zero downloads).
 
-### Cluster Guidelines & Best Practices (CRC Policy)
-* **Zero `pip install` / Container-First**: Users should not `pip install` into home directories or login nodes, which rapidly consumes file quotas (inodes) on Lustre. Instead, we use `module load singularity` with pre-built GPU containers that bundle PyTorch, MONAI, CUDA, and dependencies.
-* **Data Storage (`/scratch/`)**: All datasets, Singularity container images (`.sif`), and checkpoints **must** reside in `/scratch/<NetID>/`. The `/home` directory has strict quota limits and must only store code.
-* **Partition**: Request the **`nvidia`** partition for GPU jobs.
-* **Modules**: Loaded via Lmod (`module purge`, `module load singularity`).
+### Cluster Architecture & Policy
+* **Pre-Built Module**: We reuse Jubail's pre-installed `module load monai/0.8.0`, which automatically executes inside the cluster's pre-built Singularity container bundling PyTorch 1.8.1, MONAI, and CUDA.
+* **Zero `pip install` / Zero Downloads**: No external Docker Hub pulling or pip installs are needed.
+* **Data Storage (`/scratch/`)**: All datasets and output checkpoints reside in `/scratch/nm4358/`.
+* **Partition**: `#SBATCH -p nvidia` with `--gres=gpu:1`.
 
 ### Step 1: Transfer Dataset to Jubail Scratch
-From your local terminal, transfer the deidentified Box directory directly to your Jubail scratch directory:
+From your local terminal:
 ```bash
-# Replace nm4358 with your NYU NetID
 rsync -avP /Users/nikhilmundhra/Library/CloudStorage/Box-Box/deidentified/ \
     nm4358@jubail.abudhabi.nyu.edu:/scratch/nm4358/deidentified/
 ```
 
-### Step 2: Connect to Jubail & Pull Code
+### Step 2: Connect to Jubail & Pull Latest Code
 SSH into Jubail:
 ```bash
 ssh nm4358@jubail.abudhabi.nyu.edu
-```
-
-Clone or pull the repository into your home directory:
-```bash
-cd ~
-git clone https://github.com/Nikhil-Mundhra/train-cnn-models.git
-# or if already cloned:
 cd ~/train-cnn-models && git pull origin main
 ```
 
-### Step 3: Prepare the Singularity Image (Zero `pip install`)
-Load the Singularity module and pull the official MONAI GPU container image into `/scratch` (takes ~2-3 minutes, run once):
-```bash
-module purge
-module load singularity
-
-# Set Singularity cache to /scratch to preserve home quota
-export SINGULARITY_CACHEDIR="/scratch/${USER}/.singularity_cache"
-export SINGULARITY_TMPDIR="/scratch/${USER}/.singularity_tmp"
-mkdir -p "/scratch/${USER}/singularityimages" "${SINGULARITY_CACHEDIR}" "${SINGULARITY_TMPDIR}"
-
-# Pull official MONAI/PyTorch CUDA container into scratch
-singularity pull /scratch/${USER}/singularityimages/monai.sif docker://projectmonai/monai:latest
-```
-*(Note: If you skip this manual pull, `train_rnfl_jubail.slurm` will automatically detect that the image is missing and pull it on first launch).*
-
-### Step 4: Submit the SLURM Batch Job
-Submit [`train_rnfl_jubail.slurm`](file:///Users/nikhilmundhra/Documents/Github/Capstone/train-cnn-models/model_training/train_rnfl_volumetric/train_rnfl_jubail.slurm):
+### Step 3: Submit the SLURM Batch Job
 ```bash
 cd ~/train-cnn-models/model_training/train_rnfl_volumetric
 sbatch train_rnfl_jubail.slurm
 ```
 
 The batch script automatically:
-1. Loads `singularity` via Lmod.
-2. Mounts `/scratch` into the container.
-3. Passes the GPU hardware via `--nv`.
-4. Executes the multi-epoch training script using the container's built-in PyTorch and MONAI.
+1. Loads `monai/0.8.0` (which triggers Jubail's pre-built Singularity container).
+2. Requests 1x NVIDIA GPU on partition `nvidia`.
+3. Runs the multi-epoch training script directly with `monai python`.
 
-### Step 5: Monitor the Job
+### Step 4: Monitor the Job
 ```bash
-# Check job queue status
-squeue -u $USER
+# Check queue status
+squeue -u nm4358
 
-# Follow the live training logs
+# Follow live training logs
 tail -f slurm_rnfl_*.out
 ```
 
-### Step 6: Retrieve Checkpoints to Local Machine
-Once training completes, copy the best model weights back to your local machine:
+### Step 5: Retrieve Checkpoints to Local Machine
+Once training completes, download the best model weights back to your local machine:
 ```bash
 # Run on your local machine:
 mkdir -p ./checkpoints/jubail_run
 rsync -avP nm4358@jubail.abudhabi.nyu.edu:/scratch/nm4358/checkpoints/rnfl_volumetric_*/best_volumetric_rnfl_net.pt ./checkpoints/jubail_run/
 ```
+
 
 

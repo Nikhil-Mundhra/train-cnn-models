@@ -74,7 +74,7 @@ def compute_batch_metrics(preds, targets):
         }
 
 
-def validate(model, val_loader, criterion, device):
+def validate(model, val_loader, criterion, device, autocast_device="cpu", amp_dtype=torch.float32, use_amp=False):
     model.eval()
     val_loss = 0.0
     dices = []
@@ -86,29 +86,30 @@ def validate(model, val_loader, criterion, device):
     peri_nfl_errs = []
 
     with torch.no_grad():
-        for batch in val_loader:
-            for k in ['image', 'mask', 'ilm_surface', 'nfl_surface', 'cup_absent']:
-                batch[k] = batch[k].to(device)
+        with torch.autocast(device_type=autocast_device, dtype=amp_dtype, enabled=use_amp):
+            for batch in val_loader:
+                for k in ['image', 'mask', 'ilm_surface', 'nfl_surface', 'cup_absent']:
+                    batch[k] = batch[k].to(device)
 
-            preds = model(batch['image'])
-            losses = criterion(preds, batch)
-            val_loss += losses['loss'].item()
+                preds = model(batch['image'])
+                losses = criterion(preds, batch)
+                val_loss += losses['loss'].item()
 
-            metrics = compute_batch_metrics(preds, batch)
-            dices.append(metrics['dice'])
-            ilm_mabes.append(metrics['ilm_mabe'])
-            nfl_mabes.append(metrics['nfl_mabe'])
-            cup_ious.append(metrics['cup_iou'])
+                metrics = compute_batch_metrics(preds, batch)
+                dices.append(metrics['dice'])
+                ilm_mabes.append(metrics['ilm_mabe'])
+                nfl_mabes.append(metrics['nfl_mabe'])
+                cup_ious.append(metrics['cup_iou'])
 
-            # Collect peripapillary slice metrics
-            is_peri = batch['is_peripapillary']
-            if is_peri.any():
-                cup_absent = batch['cup_absent'][is_peri]
-                tissue = (1.0 - cup_absent)
-                nfl_err = torch.abs(preds['nfl_pred'][is_peri] - batch['nfl_surface'][is_peri]) * AXIAL_UM
-                valid_err = nfl_err[tissue > 0.5].cpu().numpy()
-                if len(valid_err) > 0:
-                    peri_nfl_errs.extend(valid_err)
+                # Collect peripapillary slice metrics
+                is_peri = batch['is_peripapillary']
+                if is_peri.any():
+                    cup_absent = batch['cup_absent'][is_peri]
+                    tissue = (1.0 - cup_absent)
+                    nfl_err = torch.abs(preds['nfl_pred'][is_peri] - batch['nfl_surface'][is_peri]) * AXIAL_UM
+                    valid_err = nfl_err[tissue > 0.5].cpu().numpy()
+                    if len(valid_err) > 0:
+                        peri_nfl_errs.extend(valid_err)
 
     n_batches = len(val_loader)
     avg_loss = val_loss / n_batches
@@ -133,7 +134,11 @@ def validate(model, val_loader, criterion, device):
 
 def train(args):
     device = torch.device(args.device if args.device else ("mps" if torch.backends.mps.is_available() else "cpu"))
-    print(f"[Training] Using compute device: {device}")
+    autocast_device = "mps" if device.type == "mps" else ("cuda" if device.type == "cuda" else "cpu")
+    use_amp = args.precision in ["bf16", "fp16"]
+    amp_dtype = torch.bfloat16 if args.precision == "bf16" else (torch.float16 if args.precision == "fp16" else torch.float32)
+
+    print(f"[Training] Using compute device: {device} | Precision: {args.precision.upper()} (AMP: {use_amp}, dtype: {amp_dtype})")
 
     os.makedirs(args.checkpoint_dir, exist_ok=True)
 
@@ -187,8 +192,29 @@ def train(args):
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
 
+    # AMP Autocast & GradScaler compatibility across PyTorch 1.8 -> 2.6+
+    if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
+        try:
+            scaler = torch.amp.GradScaler(autocast_device, enabled=(args.precision == "fp16"))
+        except TypeError:
+            scaler = torch.cuda.amp.GradScaler(enabled=(args.precision == "fp16" and device.type == "cuda"))
+    elif hasattr(torch.cuda, "amp") and hasattr(torch.cuda.amp, "GradScaler"):
+        scaler = torch.cuda.amp.GradScaler(enabled=(args.precision == "fp16" and device.type == "cuda"))
+    else:
+        scaler = None
+
+    def get_autocast_context():
+        if hasattr(torch, "autocast"):
+            return torch.autocast(device_type=autocast_device, dtype=amp_dtype, enabled=use_amp)
+        elif hasattr(torch.cuda, "amp") and hasattr(torch.cuda.amp, "autocast"):
+            return torch.cuda.amp.autocast(enabled=(use_amp and device.type == "cuda"))
+        else:
+            from contextlib import nullcontext
+            return nullcontext()
+
     best_peri_mabe = float('inf')
     best_checkpoint_path = os.path.join(args.checkpoint_dir, "best_volumetric_rnfl_net.pt")
+    training_start_time = time.time()
 
     print("\n==========================================================================================")
     print("=== STARTING VOLUMETRIC RNFL MODEL TRAINING                                           ===")
@@ -204,23 +230,36 @@ def train(args):
             for k in ['image', 'mask', 'ilm_surface', 'nfl_surface', 'cup_absent']:
                 batch[k] = batch[k].to(device)
 
-            preds = model(batch['image'])
-            loss_dict = criterion(preds, batch)
-            loss = loss_dict['loss'] / args.accum_steps
-            loss.backward()
+            with get_autocast_context():
+                preds = model(batch['image'])
+                loss_dict = criterion(preds, batch)
+                loss = loss_dict['loss'] / args.accum_steps
 
-            if (step + 1) % args.accum_steps == 0 or (step + 1) == len(train_loader):
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                optimizer.step()
-                optimizer.zero_grad()
+            if args.precision == "fp16":
+                scaler.scale(loss).backward()
+                if (step + 1) % args.accum_steps == 0 or (step + 1) == len(train_loader):
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    scaler.step(optimizer)
+                    scaler.update()
+                    optimizer.zero_grad()
+            else:
+                loss.backward()
+                if (step + 1) % args.accum_steps == 0 or (step + 1) == len(train_loader):
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    optimizer.step()
+                    optimizer.zero_grad()
 
             epoch_loss += loss_dict['loss'].item()
 
             if (step + 1) % args.log_interval == 0:
+                step_elapsed = time.time() - t0
+                speed = ((step + 1) * args.batch_size) / step_elapsed
                 print(
                     f"Epoch [{epoch}/{args.epochs}] Step [{step+1}/{len(train_loader)}] "
                     f"Loss: {loss_dict['loss'].item():.2f} "
-                    f"(Dice: {loss_dict['loss_dice'].item():.3f}, Bnd: {loss_dict['loss_boundary'].item():.1f} um, Cup: {loss_dict['loss_cup'].item():.3f})",
+                    f"(Dice: {loss_dict['loss_dice'].item():.3f}, Bnd: {loss_dict['loss_boundary'].item():.1f} um, Cup: {loss_dict['loss_cup'].item():.3f}) | "
+                    f"Speed: {speed:.1f} slices/s",
                     flush=True
                 )
 
@@ -229,17 +268,30 @@ def train(args):
         train_time = time.time() - t0
 
         # Run Validation
-        val_metrics = validate(model, val_loader, criterion, device)
+        t_val_start = time.time()
+        val_metrics = validate(model, val_loader, criterion, device, autocast_device, amp_dtype, use_amp)
+        val_time = time.time() - t_val_start
 
-        print("------------------------------------------------------------------------------------------")
+        epoch_total_time = time.time() - t0
+        total_elapsed = time.time() - training_start_time
+        avg_epoch_time = total_elapsed / epoch
+        remaining_eta = avg_epoch_time * (args.epochs - epoch)
+
+        print("------------------------------------------------------------------------------------------", flush=True)
         print(
-            f"Epoch [{epoch}/{args.epochs}] Completed in {train_time:.1f}s | "
+            f"Epoch [{epoch}/{args.epochs}] Total Time: {epoch_total_time:.1f}s (Train: {train_time:.1f}s, Val: {val_time:.1f}s) | "
             f"Train Loss: {train_loss:.2f} | Val Loss: {val_metrics['loss']:.2f} | "
             f"Val Dice: {val_metrics['dice']:.4f} | "
             f"Val Peri NFL MABE: {val_metrics['peri_nfl_mabe']:.2f} um | "
-            f"Val Peri NFL P95: {val_metrics['peri_nfl_p95']:.2f} um"
+            f"Val Peri NFL P95: {val_metrics['peri_nfl_p95']:.2f} um",
+            flush=True
         )
-        print("------------------------------------------------------------------------------------------")
+        print(
+            f"[Telemetry] Throughput: {len(train_ds)/train_time:.1f} train slices/s | "
+            f"Cumulative Elapsed: {total_elapsed/60:.1f}m | Remaining ETA: {remaining_eta/60:.1f}m",
+            flush=True
+        )
+        print("------------------------------------------------------------------------------------------", flush=True)
 
         # Save Best Checkpoint
         if val_metrics['peri_nfl_mabe'] < best_peri_mabe:
@@ -251,7 +303,7 @@ def train(args):
                 'val_metrics': val_metrics,
                 'args': vars(args)
             }, best_checkpoint_path)
-            print(f"[Checkpoint] New best peripapillary NFL MABE ({best_peri_mabe:.2f} um) saved to {best_checkpoint_path}\n")
+            print(f"[Checkpoint] New best peripapillary NFL MABE ({best_peri_mabe:.2f} um) saved to {best_checkpoint_path}\n", flush=True)
 
     print("\n==========================================================================================")
     print(f"=== TRAINING COMPLETE. Best Peripapillary NFL MABE: {best_peri_mabe:.2f} um ===")
@@ -270,6 +322,8 @@ if __name__ == "__main__":
     parser.add_argument("--context_slices", type=int, default=5)
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--device", type=str, default="")
+    parser.add_argument("--precision", type=str, default="bf16", choices=["bf16", "fp16", "fp32"],
+                        help="Training precision: bf16 (bfloat16, recommended for MPS), fp16 (float16 with GradScaler), or fp32")
     parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints/train_rnfl_volumetric")
     parser.add_argument("--log_interval", type=int, default=100)
     args = parser.parse_args()
