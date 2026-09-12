@@ -6,11 +6,11 @@
 # ==============================================================================
 
 #SBATCH -p nvidia                      # Request GPU partition (nvidia)
-#SBATCH --gres=gpu:1                   # Request 1 GPU (or specify --gres=gpu:a100:1 for A100)
+#SBATCH --gres=gpu:1                   # Request 1 GPU: uses --gres=gpu:1 (any free GPU) or --gres=gpu:a100:1 or --gres=gpu:v100:1
 #SBATCH -n 1                           # 1 task
 #SBATCH -c 8                           # 8 CPU cores for fast data loading
 #SBATCH --mem=32G                      # 32 GB RAM
-#SBATCH -t 06:00:00                    # Wall clock time limit (6 hours)
+#SBATCH -t 02:00:00                    # Wall clock time limit (2 hours is plenty; ~20-30 min actual run)
 #SBATCH -J rnfl_train                  # Job name
 #SBATCH -o slurm_rnfl_%j.out           # Standard output log (%j expands to jobID)
 #SBATCH -e slurm_rnfl_%j.err           # Standard error log
