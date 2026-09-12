@@ -197,7 +197,7 @@ module load singularity
 # Set Singularity cache to /scratch to preserve home quota
 export SINGULARITY_CACHEDIR="/scratch/${USER}/.singularity_cache"
 export SINGULARITY_TMPDIR="/scratch/${USER}/.singularity_tmp"
-mkdir -p "/scratch/${USER}/singularityimages"
+mkdir -p "/scratch/${USER}/singularityimages" "${SINGULARITY_CACHEDIR}" "${SINGULARITY_TMPDIR}"
 
 # Pull official MONAI/PyTorch CUDA container into scratch
 singularity pull /scratch/${USER}/singularityimages/monai.sif docker://projectmonai/monai:latest
