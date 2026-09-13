@@ -21,9 +21,11 @@ class VolumetricRNFLLoss(nn.Module):
         self,
         weight_dice=1.0,
         weight_bce=1.0,
-        weight_boundary=0.05,
+        weight_boundary=0.4,
         weight_cup=0.5,
-        weight_topo=0.1
+        weight_topo=0.1,
+        weight_edge=0.2,
+        peripapillary_weight=3.0
     ):
         super().__init__()
         self.weight_dice = weight_dice
@@ -31,6 +33,8 @@ class VolumetricRNFLLoss(nn.Module):
         self.weight_boundary = weight_boundary
         self.weight_cup = weight_cup
         self.weight_topo = weight_topo
+        self.weight_edge = weight_edge
+        self.peripapillary_weight = peripapillary_weight
 
         self.dice_loss = DiceLoss(sigmoid=True, smooth_nr=1e-5, smooth_dr=1e-5)
         self.bce_loss = nn.BCEWithLogitsLoss()
@@ -44,10 +48,12 @@ class VolumetricRNFLLoss(nn.Module):
             'nfl_pred':    (B, W)
             'cup_logits':  (B, W)
         targets: dict containing:
-            'mask':        (B, 1, H, W)
-            'ilm_surface': (B, W)
-            'nfl_surface': (B, W)
-            'cup_absent':  (B, W)
+            'mask':             (B, 1, H, W)
+            'ilm_surface':      (B, W)
+            'nfl_surface':      (B, W)
+            'cup_absent':       (B, W)
+            'image':            (B, C, H, W) optional for edge loss
+            'is_peripapillary': (B,) optional for rim weighting
         """
         # 1. Dense Segmentation Losses
         loss_dice = self.dice_loss(preds['mask_logits'], targets['mask'])
@@ -61,9 +67,18 @@ class VolumetricRNFLLoss(nn.Module):
         # NFL loss only where tissue is present (cup_absent == 0)
         cup_absent = targets['cup_absent']  # (B, W)
         tissue_mask = (1.0 - cup_absent)
+
+        # Peripapillary loss weighting: heavily penalize errors around the disc margin
+        is_peri = targets.get('is_peripapillary', None)
+        if is_peri is not None and is_peri.any():
+            peri_weight = torch.ones_like(tissue_mask)
+            peri_weight[is_peri] *= self.peripapillary_weight
+        else:
+            peri_weight = 1.0
+
         nfl_err = self.smooth_l1(preds['nfl_pred'], targets['nfl_surface']) * AXIAL_UM
-        nfl_valid_err = nfl_err * tissue_mask
-        loss_nfl = nfl_valid_err.sum() / (tissue_mask.sum() + 1e-6)
+        nfl_valid_err = nfl_err * tissue_mask * peri_weight
+        loss_nfl = nfl_valid_err.sum() / ((tissue_mask * peri_weight).sum() + 1e-6)
 
         loss_boundary = loss_ilm + loss_nfl
 
@@ -71,9 +86,31 @@ class VolumetricRNFLLoss(nn.Module):
         loss_cup = self.bce_loss(preds['cup_logits'], cup_absent)
 
         # 4. Topological Ordering Constraint: ILM must be <= NFL (depth increases downwards)
-        # Violations occur when ilm_pred > nfl_pred
         topo_violation = F.relu(preds['ilm_pred'] - preds['nfl_pred']) * tissue_mask
         loss_topo = topo_violation.mean()
+
+        # 5. Optical Reflectance Edge Alignment Loss (snaps to physical bright-to-dark drop-off)
+        loss_edge = torch.tensor(0.0, device=preds['nfl_pred'].device)
+        if self.weight_edge > 0 and 'image' in targets:
+            img = targets['image'][:, 2:3, :, :].float()  # central B-scan
+            B, _, H_img, W_img = img.shape
+            edge_raw = F.relu(img[:, :, :-1, :] - img[:, :, 1:, :])
+
+            # Vertical Gaussian smoothing to provide a wide basin of attraction
+            k_size = 15
+            sigma = 3.0
+            k = torch.exp(-torch.arange(-(k_size//2), k_size//2 + 1, dtype=torch.float32, device=img.device)**2 / (2 * sigma**2))
+            k = (k / k.sum()).view(1, 1, k_size, 1)
+            edge_smooth = F.conv2d(edge_raw, k, padding=(k_size//2, 0))
+
+            x_coords = torch.linspace(-1, 1, W_img, dtype=torch.float32, device=img.device).unsqueeze(0).expand(B, -1)
+            norm_y = 2.0 * preds['nfl_pred'] / (H_img - 2) - 1.0
+            grid = torch.stack([x_coords, norm_y], dim=-1).unsqueeze(1)
+            sampled_edge = F.grid_sample(edge_smooth, grid, mode='bilinear', align_corners=True).squeeze(1).squeeze(1)
+
+            # Maximize gradient at boundary (minimize -sampled_edge) where tissue is present
+            edge_masked = sampled_edge * tissue_mask * (peri_weight if is_peri is not None else 1.0)
+            loss_edge = -edge_masked.sum() / ((tissue_mask * peri_weight).sum() + 1e-6)
 
         # Total Weighted Loss
         total_loss = (
@@ -81,6 +118,7 @@ class VolumetricRNFLLoss(nn.Module):
             + self.weight_boundary * loss_boundary
             + self.weight_cup * loss_cup
             + self.weight_topo * loss_topo
+            + self.weight_edge * loss_edge
         )
 
         return {
@@ -92,4 +130,5 @@ class VolumetricRNFLLoss(nn.Module):
             'loss_nfl': loss_nfl.detach(),
             'loss_cup': loss_cup.detach(),
             'loss_topo': loss_topo.detach(),
+            'loss_edge': loss_edge.detach(),
         }

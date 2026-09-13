@@ -29,17 +29,25 @@ _ARRAY = re.compile(rb'<ARRAY>\s*(\d+)\s*</ARRAY>')
 _IMG = re.compile(rb'<IMAGE_Number>\s*(\d+)\s*</IMAGE_Number>')
 
 
-def read_bscan_raw(path, index, rows=768, cols=320):
+def find_dicom_pixel_offset(path):
     """
-    Directly seeks and reads a single 16-bit uint B-scan from DICOM PixelData.
-    Executes in ~1.5 ms without loading the entire volume into RAM.
+    Finds the byte offset of the PixelData tag (7FE0, 0010) in a DICOM file.
     """
-    nbytes = rows * cols * 2
     with open(path, 'rb') as fh:
         head = fh.read(1 << 23)
         tag = head.find(b'\xe0\x7f\x10\x00')
         vr = head[tag + 4:tag + 6]
-        start = tag + 12 if vr in (b'OW', b'OB', b'UN') else tag + 8
+        return tag + 12 if vr in (b'OW', b'OB', b'UN') else tag + 8
+
+
+def read_bscan_raw(path, index, rows=768, cols=320, start=None):
+    """
+    Directly seeks and reads a single 16-bit uint B-scan from DICOM PixelData.
+    """
+    nbytes = rows * cols * 2
+    if start is None:
+        start = find_dicom_pixel_offset(path)
+    with open(path, 'rb') as fh:
         fh.seek(start + index * nbytes)
         buf = fh.read(nbytes)
     return np.frombuffer(buf, dtype='<u2').reshape(rows, cols)
@@ -129,12 +137,17 @@ class SolixRNFLDataset(Dataset):
                 zc, xc = np.mean(np.where(nan_mask)[0]), np.mean(np.where(nan_mask)[1])
                 r_disc = np.sqrt(len(np.where(nan_mask)[0]) / np.pi)
 
+                # Find pixel data offset and open read-only memory map
+                pixel_offset = find_dicom_pixel_offset(dcm_path)
+                memmap = np.memmap(dcm_path, dtype='<u2', mode='r', offset=pixel_offset, shape=(n_bscans, 768, 320))
+
                 scan_info = {
                     'subject': subj,
                     'eye': eye,
                     'xml_path': xml_path,
                     'dcm_path': dcm_path,
                     'curves': curves,
+                    'memmap': memmap,
                     'n_bscans': n_bscans,
                     'n_ascans': n_ascans,
                     'zc': zc,
@@ -164,15 +177,14 @@ class SolixRNFLDataset(Dataset):
         sample = self.samples[index]
         scan = self.scans[sample['scan_idx']]
         b_idx = sample['bscan_idx']
-        dcm_path = scan['dcm_path']
         n_bscans = scan['n_bscans']
 
-        # 1. Load 2.5D multi-slice stack
+        # 1. Load 2.5D multi-slice stack from zero-overhead memory map
         slice_indices = [
             min(max(b_idx + offset, 0), n_bscans - 1)
             for offset in range(-self.half_ctx, self.half_ctx + 1)
         ]
-        slices = [read_bscan_raw(dcm_path, s_idx) for s_idx in slice_indices]
+        slices = [scan['memmap'][s_idx] for s_idx in slice_indices]
         img_stack = np.stack(slices, axis=0).astype(np.float32)  # (C, 768, 320)
 
         # Normalize raw Solix 16-bit uint (0-2560) to [0.0, 1.0]
@@ -182,19 +194,15 @@ class SolixRNFLDataset(Dataset):
         ilm_row = scan['curves']['ILM'][b_idx].copy()
         nfl_row = scan['curves']['NFL'][b_idx].copy()
 
-        # 3. Generate Binary RNFL Mask: 1 inside RNFL, 0 outside
+        # 3. Generate Binary RNFL Mask: 1 inside RNFL, 0 outside (vectorized)
         rows, cols = img_stack.shape[1], img_stack.shape[2]
-        mask = np.zeros((rows, cols), dtype=np.float32)
-
         cup_absent = np.isnan(nfl_row).astype(np.float32)
 
-        for col in range(cols):
-            top = ilm_row[col]
-            bot = nfl_row[col]
-            if not np.isnan(top) and not np.isnan(bot) and bot > top:
-                y0 = max(0, int(round(top)))
-                y1 = min(rows, int(round(bot)))
-                mask[y0:y1, col] = 1.0
+        y_coords = np.arange(rows, dtype=np.float32)[:, None]
+        valid = ~np.isnan(ilm_row) & ~np.isnan(nfl_row) & (nfl_row > ilm_row)
+        y0 = np.clip(np.round(np.nan_to_num(ilm_row, nan=-1)), 0, rows)
+        y1 = np.clip(np.round(np.nan_to_num(nfl_row, nan=-1)), 0, rows)
+        mask = ((y_coords >= y0) & (y_coords < y1) & valid).astype(np.float32)
 
         # 4. Standardize Eye Orientation: Flip OS horizontally so Nasal is consistently on one side
         if self.standardize_eye and scan['eye'] == 'OS':

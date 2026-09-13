@@ -88,7 +88,7 @@ def validate(model, val_loader, criterion, device, autocast_device="cpu", amp_dt
     with torch.no_grad():
         with torch.autocast(device_type=autocast_device, dtype=amp_dtype, enabled=use_amp):
             for batch in val_loader:
-                for k in ['image', 'mask', 'ilm_surface', 'nfl_surface', 'cup_absent']:
+                for k in ['image', 'mask', 'ilm_surface', 'nfl_surface', 'cup_absent', 'is_peripapillary']:
                     batch[k] = batch[k].to(device)
 
                 preds = model(batch['image'])
@@ -216,6 +216,14 @@ def train(args):
     best_checkpoint_path = os.path.join(args.checkpoint_dir, "best_volumetric_rnfl_net.pt")
     training_start_time = time.time()
 
+    if args.resume_checkpoint and os.path.isfile(args.resume_checkpoint):
+        print(f"[Training] Initializing weights from checkpoint: {args.resume_checkpoint}")
+        ckpt = torch.load(args.resume_checkpoint, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt['model_state_dict'])
+        if 'val_metrics' in ckpt and 'peri_nfl_mabe' in ckpt['val_metrics']:
+            baseline_mabe = ckpt['val_metrics']['peri_nfl_mabe']
+            print(f"[Training] Baseline peripapillary NFL MABE from checkpoint: {baseline_mabe:.2f} um")
+
     print("\n==========================================================================================")
     print("=== STARTING VOLUMETRIC RNFL MODEL TRAINING                                           ===")
     print("==========================================================================================")
@@ -227,7 +235,7 @@ def train(args):
 
         optimizer.zero_grad()
         for step, batch in enumerate(train_loader):
-            for k in ['image', 'mask', 'ilm_surface', 'nfl_surface', 'cup_absent']:
+            for k in ['image', 'mask', 'ilm_surface', 'nfl_surface', 'cup_absent', 'is_peripapillary']:
                 batch[k] = batch[k].to(device)
 
             with get_autocast_context():
@@ -255,10 +263,11 @@ def train(args):
             if (step + 1) % args.log_interval == 0:
                 step_elapsed = time.time() - t0
                 speed = ((step + 1) * args.batch_size) / step_elapsed
+                edge_val = loss_dict.get('loss_edge', torch.tensor(0.0)).item()
                 print(
                     f"Epoch [{epoch}/{args.epochs}] Step [{step+1}/{len(train_loader)}] "
                     f"Loss: {loss_dict['loss'].item():.2f} "
-                    f"(Dice: {loss_dict['loss_dice'].item():.3f}, Bnd: {loss_dict['loss_boundary'].item():.1f} um, Cup: {loss_dict['loss_cup'].item():.3f}) | "
+                    f"(Dice: {loss_dict['loss_dice'].item():.3f}, Bnd: {loss_dict['loss_boundary'].item():.1f} um, Edge: {edge_val:.3f}) | "
                     f"Speed: {speed:.1f} slices/s",
                     flush=True
                 )
@@ -293,16 +302,21 @@ def train(args):
         )
         print("------------------------------------------------------------------------------------------", flush=True)
 
+        # Always save latest checkpoint
+        latest_checkpoint_path = os.path.join(args.checkpoint_dir, "latest_volumetric_rnfl_net.pt")
+        ckpt_data = {
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'val_metrics': val_metrics,
+            'args': vars(args)
+        }
+        torch.save(ckpt_data, latest_checkpoint_path)
+
         # Save Best Checkpoint
         if val_metrics['peri_nfl_mabe'] < best_peri_mabe:
             best_peri_mabe = val_metrics['peri_nfl_mabe']
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'val_metrics': val_metrics,
-                'args': vars(args)
-            }, best_checkpoint_path)
+            torch.save(ckpt_data, best_checkpoint_path)
             print(f"[Checkpoint] New best peripapillary NFL MABE ({best_peri_mabe:.2f} um) saved to {best_checkpoint_path}\n", flush=True)
 
     print("\n==========================================================================================")
@@ -324,6 +338,8 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="")
     parser.add_argument("--precision", type=str, default="bf16", choices=["bf16", "fp16", "fp32"],
                         help="Training precision: bf16 (bfloat16, recommended for MPS), fp16 (float16 with GradScaler), or fp32")
+    parser.add_argument("--resume_checkpoint", type=str, default="",
+                        help="Path to pre-trained checkpoint to resume or fine-tune from")
     parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints/train_rnfl_volumetric")
     parser.add_argument("--log_interval", type=int, default=100)
     args = parser.parse_args()

@@ -22,7 +22,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from dataset import read_bscan_raw
+from dataset import read_bscan_raw, find_dicom_pixel_offset
 from model import VolumetricRNFLNet
 
 
@@ -43,6 +43,13 @@ def run_volumetric_inference(
 
     print(f"[Inference] Processing {num_bscans} B-scans from {os.path.basename(dcm_path)} on {device}...")
 
+    # Fast memory-mapped DICOM slice reading
+    offset = find_dicom_pixel_offset(dcm_path)
+    memmap = np.memmap(dcm_path, dtype='<u2', mode='r', offset=offset, shape=(num_bscans, rows, cols))
+
+    autocast_device = "mps" if "mps" in str(device) else ("cuda" if "cuda" in str(device) else "cpu")
+    use_amp = "mps" in str(device) or "cuda" in str(device)
+
     # Process in batches
     for start_idx in range(0, num_bscans, batch_size):
         end_idx = min(start_idx + batch_size, num_bscans)
@@ -50,19 +57,30 @@ def run_volumetric_inference(
 
         for b_idx in range(start_idx, end_idx):
             slice_indices = [
-                min(max(b_idx + offset, 0), num_bscans - 1)
-                for offset in range(-half_ctx, half_ctx + 1)
+                min(max(b_idx + offset_idx, 0), num_bscans - 1)
+                for offset_idx in range(-half_ctx, half_ctx + 1)
             ]
-            stack = [read_bscan_raw(dcm_path, s_idx, rows=rows, cols=cols) for s_idx in slice_indices]
+            stack = [memmap[s_idx] for s_idx in slice_indices]
             img_stack = np.stack(stack, axis=0).astype(np.float32) / 2560.0
             batch_slices.append(img_stack)
 
         batch_tensor = torch.from_numpy(np.stack(batch_slices, axis=0)).to(device)
 
         with torch.no_grad():
-            preds = model(batch_tensor)
-            probs = torch.sigmoid(preds['mask_logits']).squeeze(1).cpu().numpy()
+            with torch.autocast(device_type=autocast_device, dtype=torch.bfloat16, enabled=use_amp):
+                preds = model(batch_tensor)
+                probs = torch.sigmoid(preds['mask_logits']).squeeze(1).float().cpu().numpy()
+                cup_probs = torch.sigmoid(preds['cup_logits']).float().cpu().numpy()
             binary_masks = (probs > threshold).astype(np.uint8)
+
+            # Apply anatomical vertical truncation at BMO / RPE termination endpoints
+            for i in range(binary_masks.shape[0]):
+                cup_cols = np.where(cup_probs[i] > 0.5)[0]
+                if len(cup_cols) > 0:
+                    bmo_left = cup_cols[0]
+                    bmo_right = cup_cols[-1]
+                    # Vertically crop mask inside BMO optic cup cavity
+                    binary_masks[i, :, bmo_left:bmo_right + 1] = 0
 
         full_vol_mask[start_idx:end_idx] = binary_masks
 
@@ -94,7 +112,7 @@ def export_prediction(
 
     # Save as compressed numpy
     base_name = Path(dcm_path).stem
-    out_npz = os.path.join(output_dir, f"{base_name}_rnfl_pred.npz")
+    out_npz = os.path.abspath(os.path.join(output_dir, f"{base_name}_rnfl_pred.npz"))
     np.savez_compressed(out_npz, rnfl_mask=pred_mask)
     print(f"[Export] Saved 3D binary mask to {out_npz}")
 
