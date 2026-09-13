@@ -13,6 +13,7 @@ Supports:
 import os
 import glob
 import re
+import xml.etree.ElementTree as ET
 import numpy as np
 import torch
 from torch.utils.data import Dataset
@@ -27,6 +28,43 @@ _D = re.compile(rb'<D>\s*(-?\d+)\s*</D>')
 _TYPE = re.compile(rb'<Type>\s*([^<]+?)\s*</Type>')
 _ARRAY = re.compile(rb'<ARRAY>\s*(\d+)\s*</ARRAY>')
 _IMG = re.compile(rb'<IMAGE_Number>\s*(\d+)\s*</IMAGE_Number>')
+
+
+def find_matching_curve_xml(tsv_dir, subj, eye, dcm_fname, protocol="Disc Cube"):
+    """
+    Finds the exact XML curve corresponding to a DICOM volume.
+    Matches via timestamp in the master XML if available, otherwise falls back to glob.
+    """
+    subj_tsv = os.path.join(tsv_dir, subj)
+    if not os.path.exists(subj_tsv):
+        return None
+
+    # Try matching by timestamp via master XML
+    m = re.search(r"(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})", dcm_fname)
+    if m:
+        target_time = f"{m.group(1)} {m.group(2)}:{m.group(3)}:{m.group(4)}"
+        master_xmls = glob.glob(os.path.join(subj_tsv, "*.xml"))
+        for m_xml in master_xmls:
+            try:
+                tree = ET.parse(m_xml)
+                for scan in tree.getroot().iter("Scan"):
+                    stype = scan.findtext("ScanType", "").strip()
+                    stime = scan.findtext("ScanTime", "").strip()
+                    seye = scan.findtext("Eye", "").strip()
+                    cfile = scan.findtext("Curve/File", "").strip()
+                    if protocol.lower() in stype.lower() and seye == eye and stime == target_time and cfile:
+                        rel_path = cfile.replace("\\", "/").lstrip("./")
+                        full_path = os.path.join(subj_tsv, rel_path)
+                        if os.path.exists(full_path):
+                            return full_path
+            except Exception:
+                pass
+
+    # Fallback to globbing by eye and protocol if timestamp matching yields no result
+    xmls = glob.glob(os.path.join(subj_tsv, "curve", f"*{eye}*{protocol}*.xml"))
+    if not xmls:
+        xmls = glob.glob(os.path.join(subj_tsv, "curve", f"*{protocol}*{eye}*.xml"))
+    return xmls[0] if xmls else None
 
 
 def find_dicom_pixel_offset(path):
@@ -115,18 +153,17 @@ class SolixRNFLDataset(Dataset):
         self.scans = []
         self.samples = []
 
-        # Index all available scans and samples
+        # Index all available scans and samples with exact timestamp fidelity
         for subj in self.subjects:
-            xmls = sorted(glob.glob(os.path.join(tsv_dir, subj, "curve", f"*{protocol}*.xml")))
-            for xml_path in xmls:
-                fname = os.path.basename(xml_path)
-                eye = "OD" if "_OD_" in fname else "OS"
+            dcm_matches = sorted(glob.glob(os.path.join(dcm_dir, subj, f"*{protocol}*_OPT.dcm")))
+            for dcm_path in dcm_matches:
+                dcm_fname = os.path.basename(dcm_path)
+                eye = "OS" if "_OS_" in dcm_fname else "OD"
 
-                # Find matching DICOM
-                dcm_matches = sorted(glob.glob(os.path.join(dcm_dir, subj, f"*{protocol}_{eye}*_OPT.dcm")))
-                if not dcm_matches:
+                # Find matching XML curve with timestamp fidelity
+                xml_path = find_matching_curve_xml(tsv_dir, subj, eye, dcm_fname, protocol=protocol)
+                if not xml_path:
                     continue
-                dcm_path = dcm_matches[0]
 
                 # Load and cache curves for this scan
                 curves = load_curves(xml_path, mask_sentinel=True)

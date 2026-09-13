@@ -10,7 +10,9 @@ import os
 import sys
 import glob
 import json
+import re
 import argparse
+import xml.etree.ElementTree as ET
 from pathlib import Path
 import numpy as np
 import torch
@@ -225,6 +227,43 @@ def render_deep_dive_panel(raw_bscan, mask_cyan, mask_green, mask_red, enface_im
     plt.close(fig)
 
 
+def find_matching_curve_xml(tsv_dir, subj, eye, dcm_fname, protocol="Disc Cube"):
+    """
+    Finds the exact XML curve corresponding to a DICOM volume.
+    Matches via timestamp in the master XML if available, otherwise falls back to glob.
+    """
+    subj_tsv = os.path.join(tsv_dir, subj)
+    if not os.path.exists(subj_tsv):
+        return None
+
+    # Try matching by timestamp via master XML
+    m = re.search(r"(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})", dcm_fname)
+    if m:
+        target_time = f"{m.group(1)} {m.group(2)}:{m.group(3)}:{m.group(4)}"
+        master_xmls = glob.glob(os.path.join(subj_tsv, "*.xml"))
+        for m_xml in master_xmls:
+            try:
+                tree = ET.parse(m_xml)
+                for scan in tree.getroot().iter("Scan"):
+                    stype = scan.findtext("ScanType", "").strip()
+                    stime = scan.findtext("ScanTime", "").strip()
+                    seye = scan.findtext("Eye", "").strip()
+                    cfile = scan.findtext("Curve/File", "").strip()
+                    if protocol.lower() in stype.lower() and seye == eye and stime == target_time and cfile:
+                        rel_path = cfile.replace("\\", "/").lstrip("./")
+                        full_path = os.path.join(subj_tsv, rel_path)
+                        if os.path.exists(full_path):
+                            return full_path
+            except Exception:
+                pass
+
+    # Fallback to globbing by eye and protocol if timestamp matching yields no result
+    xmls = glob.glob(os.path.join(subj_tsv, "curve", f"*{eye}*{protocol}*.xml"))
+    if not xmls:
+        xmls = glob.glob(os.path.join(subj_tsv, "curve", f"*{protocol}*{eye}*.xml"))
+    return xmls[0] if xmls else None
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", type=str, required=True)
@@ -271,18 +310,12 @@ def main():
             fname = os.path.basename(dcm_path)
             eye = "OS" if "_OS_" in fname else "OD"
 
-            # Find matching XML curves
-            good_xmls = glob.glob(os.path.join(tsv_good_dir, subj, "curve", f"*{eye}*Disc Cube*.xml"))
-            if not good_xmls:
-                good_xmls = glob.glob(os.path.join(tsv_good_dir, subj, "curve", f"*Disc Cube*{eye}*.xml"))
-            if not good_xmls:
+            # Find matching XML curves with timestamp fidelity
+            good_xml = find_matching_curve_xml(tsv_good_dir, subj, eye, fname, protocol="Disc Cube")
+            if not good_xml:
                 continue
-            good_xml = good_xmls[0]
 
-            bad_xmls = glob.glob(os.path.join(tsv_bad_dir, subj, "curve", f"*{eye}*Disc Cube*.xml"))
-            if not bad_xmls:
-                bad_xmls = glob.glob(os.path.join(tsv_bad_dir, subj, "curve", f"*Disc Cube*{eye}*.xml"))
-            bad_xml = bad_xmls[0] if bad_xmls else None
+            bad_xml = find_matching_curve_xml(tsv_bad_dir, subj, eye, fname, protocol="Disc Cube")
 
             print(f"\n---> Evaluating {subj} ({eye}) [{cohort_tag}]...")
 
