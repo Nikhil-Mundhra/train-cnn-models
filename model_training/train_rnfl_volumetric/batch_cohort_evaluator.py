@@ -66,6 +66,7 @@ class ScanEvaluationResult:
     unet_mabe: float
     unet_p95: float
     unet_cup_iou: float
+    is_mirror: bool = False
     bad_dice: Optional[float] = None
     bad_mabe: Optional[float] = None
     bad_p95: Optional[float] = None
@@ -221,7 +222,12 @@ class VolumetricRNFLPredictor:
         return cls(model=model, device=device, batch_size=batch_size)
 
     def predict(self, oct_volume: OCTVolume) -> VolumePrediction:
-        """Performs full 3D volumetric segmentation across all slices."""
+        """
+        Performs full 3D volumetric segmentation across all slices.
+        Standardizes OS (left eye) orientation during inference to match training distribution,
+        then maps predictions back to native patient coordinate space.
+        """
+        is_os = (oct_volume.eye == "OS")
         memmap = oct_volume.memmap
         n_bscans = oct_volume.n_bscans
         rows = oct_volume.rows
@@ -239,6 +245,8 @@ class VolumetricRNFLPredictor:
                 slice_indices = [min(max(b_idx + o, 0), n_bscans - 1) for o in range(-self.half_ctx, self.half_ctx + 1)]
                 stack = [memmap[s] for s in slice_indices]
                 img_stack = np.stack(stack, axis=0).astype(np.float32) / 2560.0
+                if is_os:
+                    img_stack = np.flip(img_stack, axis=-1).copy()
                 batch_slices.append(img_stack)
 
             batch_tensor = torch.from_numpy(np.stack(batch_slices, axis=0)).to(self.device)
@@ -256,6 +264,13 @@ class VolumetricRNFLPredictor:
                 cup_cols = np.where(cup_probs[i] > 0.5)[0]
                 if len(cup_cols) > 0:
                     b_masks[i, :, cup_cols[0]:cup_cols[-1] + 1] = 0
+
+            # If OS: flip predictions back to native DICOM patient coordinates
+            if is_os:
+                b_masks = np.flip(b_masks, axis=-1).copy()
+                ilm_preds = np.flip(ilm_preds, axis=-1).copy()
+                nfl_preds = np.flip(nfl_preds, axis=-1).copy()
+                cup_probs = np.flip(cup_probs, axis=-1).copy()
 
             full_mask[start_idx:end_idx] = b_masks
             full_ilm[start_idx:end_idx] = ilm_preds
@@ -369,19 +384,29 @@ class ClinicalMetricsCalculator:
                 if m_bad:
                     slice_metrics_bad.append(m_bad)
 
+        # Check if commercial curves are an unedited duplicate of ground truth (self-comparison tautology)
+        is_mirror = False
+        if curves_bad is not None and 'NFL' in curves_good and 'NFL' in curves_bad:
+            diff = np.nanmean(np.abs(curves_good['NFL'] - curves_bad['NFL']))
+            if np.isnan(diff) or diff < 1e-4:
+                is_mirror = True
+
+        has_valid_bad = (len(slice_metrics_bad) > 0 and not is_mirror)
+
         return ScanEvaluationResult(
             subject=oct_volume.subject,
             eye=oct_volume.eye,
             cohort=oct_volume.cohort_tag,
             is_validation=oct_volume.is_validation,
+            is_mirror=is_mirror,
             unet_dice=float(np.mean([m.dice for m in slice_metrics_unet])),
             unet_mabe=float(np.mean([m.nfl_mabe for m in slice_metrics_unet])),
             unet_p95=float(np.mean([m.nfl_p95 for m in slice_metrics_unet])),
             unet_cup_iou=float(np.mean([m.cup_iou for m in slice_metrics_unet])),
-            bad_dice=float(np.mean([m.dice for m in slice_metrics_bad])) if slice_metrics_bad else None,
-            bad_mabe=float(np.mean([m.nfl_mabe for m in slice_metrics_bad])) if slice_metrics_bad else None,
-            bad_p95=float(np.mean([m.nfl_p95 for m in slice_metrics_bad])) if slice_metrics_bad else None,
-            bad_cup_iou=float(np.mean([m.cup_iou for m in slice_metrics_bad])) if slice_metrics_bad else None,
+            bad_dice=float(np.mean([m.dice for m in slice_metrics_bad])) if has_valid_bad else None,
+            bad_mabe=float(np.mean([m.nfl_mabe for m in slice_metrics_bad])) if has_valid_bad else None,
+            bad_p95=float(np.mean([m.nfl_p95 for m in slice_metrics_bad])) if has_valid_bad else None,
+            bad_cup_iou=float(np.mean([m.cup_iou for m in slice_metrics_bad])) if has_valid_bad else None,
         )
 
 
