@@ -73,16 +73,43 @@ def run_volumetric_inference(
                 cup_probs = torch.sigmoid(preds['cup_logits']).float().cpu().numpy()
             binary_masks = (probs > threshold).astype(np.uint8)
 
-            # Apply anatomical vertical truncation at BMO / RPE termination endpoints
-            for i in range(binary_masks.shape[0]):
-                cup_cols = np.where(cup_probs[i] > 0.5)[0]
-                if len(cup_cols) > 0:
-                    bmo_left = cup_cols[0]
-                    bmo_right = cup_cols[-1]
-                    # Vertically crop mask inside BMO optic cup cavity
-                    binary_masks[i, :, bmo_left:bmo_right + 1] = 0
+            # -------------------------------------------------------------------------
+            # [KEPT FOR LATER REFERENCE - RPE ENDPOINT DETECTION]
+            # Rn we're detecting the end of the RPE, kept commented for later use:
+            # for i in range(binary_masks.shape[0]):
+            #     cup_cols = np.where(cup_probs[i] > 0.5)[0]
+            #     if len(cup_cols) > 0:
+            #         bmo_left = cup_cols[0]
+            #         bmo_right = cup_cols[-1]
+            #         # Vertically crop mask inside BMO optic cup cavity
+            #         binary_masks[i, :, bmo_left:bmo_right + 1] = 0
+            # -------------------------------------------------------------------------
 
         full_vol_mask[start_idx:end_idx] = binary_masks
+
+    # -------------------------------------------------------------------------
+    # Optic Disc Size & Anatomical Vertical Cut
+    # Average normal human optic disc dimensions:
+    # - Vertical diameter: ~1.8 to 1.9 mm (mean: 1.85 mm -> vertical radius ~0.925 mm)
+    # - Horizontal diameter: ~1.7 to 1.8 mm (mean: 1.75 mm -> horizontal radius ~0.875 mm)
+    # Solix Disc Cube: dx = 0.01875 mm/px, dz = 0.0188088 mm/slice
+    # Cut occurs from center (zc, xc) to that radius on either side.
+    # -------------------------------------------------------------------------
+    dx_mm = 0.01875
+    dz_mm = 0.0188088
+    rad_x_px = (1.75 / 2.0) / dx_mm       # ~46.67 pixels
+    rad_z_slices = (1.85 / 2.0) / dz_mm   # ~49.18 slices
+
+    # Disc center from scan geometry / cup prior (default: volume center)
+    zc, xc = num_bscans // 2, cols // 2
+
+    for z in range(num_bscans):
+        dz_val = abs(z - zc)
+        if dz_val <= rad_z_slices:
+            rx_z = rad_x_px * np.sqrt(max(0.0, 1.0 - (dz_val / rad_z_slices) ** 2))
+            x_left = max(0, int(round(xc - rx_z)))
+            x_right = min(cols - 1, int(round(xc + rx_z)))
+            full_vol_mask[z, :, x_left : x_right + 1] = 0
 
     print(f"[Inference] Completed! Total RNFL voxels: {np.sum(full_vol_mask == 1)}")
     return full_vol_mask
