@@ -303,18 +303,23 @@ span[style*="#d97706"] code, span[style*="#d97706"] {{
         margin-bottom: 10px !important;
     }}
     .gallery-grid {{
-        display: grid !important;
-        grid-template-columns: repeat(2, 1fr) !important;
-        gap: 6px !important;
-        page-break-inside: avoid !important;
-        break-inside: avoid !important;
+        display: block !important;
+        page-break-inside: auto !important;
+        break-inside: auto !important;
     }}
     .gallery-item {{
+        display: inline-block !important;
+        width: 49% !important;
+        vertical-align: top !important;
         page-break-inside: avoid !important;
         break-inside: avoid !important;
-        margin-bottom: 4px !important;
+        margin-bottom: 6px !important;
+        box-sizing: border-box !important;
     }}
     .gallery-item img {{
+        width: 100% !important;
+        height: auto !important;
+        display: block !important;
         margin: 2px 0 !important;
     }}
 }}
@@ -441,8 +446,7 @@ Central peripapillary B-scans ($z = z_{{\\text{{disc}}}}$) comparing the **Clini
         mabe_val = g.get('mabe', 0.0)
         md += f"""<div class="gallery-item">
 <p><strong>{subj} (OD)</strong> — Dice: <code>{dice_val:.4f}</code> | MABE: <code>{mabe_val:.2f} µm</code></p>
-
-![Gallery {subj}]({assets_rel_dir}/{fname})
+<img src="{assets_rel_dir}/{fname}" alt="Gallery {subj}" />
 </div>
 """
 
