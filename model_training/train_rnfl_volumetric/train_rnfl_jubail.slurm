@@ -69,27 +69,36 @@ ASSETS_DIR_LIGHT="${REPORT_DIR_LIGHT}/assets/executive_cohort_report"
 mkdir -p "${CHECKPOINT_DIR_LIGHT}"
 mkdir -p "${ASSETS_DIR_LIGHT}"
 
-echo "[Step 1.1] Training Light Volumetric U-Net (20 Epochs)..."
-"${PYTHON_BIN}" "${TRAIN_SCRIPT}" \
-    --dataset_root "${DATASET_ROOT}" \
-    --val_subjects "BEH0335,BEH0314,BEH0086" \
-    --epochs 20 \
-    --base_channels 16 \
-    --batch_size 32 \
-    --accum_steps 2 \
-    --lr 5e-4 \
-    --weight_decay 1e-4 \
-    --context_slices 5 \
-    --num_workers 6 \
-    --device "cuda" \
-    --checkpoint_dir "${CHECKPOINT_DIR_LIGHT}" \
-    --log_interval 25
+PRETRAINED_LIGHT="/scratch/${NETID}/checkpoints/rnfl_light_18043443/best_volumetric_rnfl_net.pt"
 
-BEST_MODEL_LIGHT="${CHECKPOINT_DIR_LIGHT}/best_volumetric_rnfl_net.pt"
-if [ ! -f "${BEST_MODEL_LIGHT}" ]; then
-    BEST_MODEL_LIGHT="${CHECKPOINT_DIR_LIGHT}/latest_volumetric_rnfl_net.pt"
+if [ -f "${PRETRAINED_LIGHT}" ] && [ "${FORCE_RETRAIN_LIGHT:-0}" != "1" ]; then
+    echo "[Step 1.1 SKIP] Found verified pre-trained Light Model (20 epochs, Dice 0.8147) at:"
+    echo "               ${PRETRAINED_LIGHT}"
+    echo "[Step 1.1 SKIP] Reusing existing weights to save ~24 minutes of GPU time."
+    BEST_MODEL_LIGHT="${PRETRAINED_LIGHT}"
+else
+    echo "[Step 1.1] Training Light Volumetric U-Net (20 Epochs)..."
+    "${PYTHON_BIN}" "${TRAIN_SCRIPT}" \
+        --dataset_root "${DATASET_ROOT}" \
+        --val_subjects "BEH0335,BEH0314,BEH0086" \
+        --epochs 20 \
+        --base_channels 16 \
+        --batch_size 32 \
+        --accum_steps 2 \
+        --lr 5e-4 \
+        --weight_decay 1e-4 \
+        --context_slices 5 \
+        --num_workers 6 \
+        --device "cuda" \
+        --checkpoint_dir "${CHECKPOINT_DIR_LIGHT}" \
+        --log_interval 25
+
+    BEST_MODEL_LIGHT="${CHECKPOINT_DIR_LIGHT}/best_volumetric_rnfl_net.pt"
+    if [ ! -f "${BEST_MODEL_LIGHT}" ]; then
+        BEST_MODEL_LIGHT="${CHECKPOINT_DIR_LIGHT}/latest_volumetric_rnfl_net.pt"
+    fi
+    echo "[Step 1.1 SUCCESS] Light Model saved to: ${BEST_MODEL_LIGHT}"
 fi
-echo "[Step 1.1 SUCCESS] Light Model saved to: ${BEST_MODEL_LIGHT}"
 
 echo "[Step 1.2] Evaluating Light Model on GPU across full cohort (46 volumes)..."
 "${PYTHON_BIN}" "${EVAL_SCRIPT}" \
