@@ -225,9 +225,14 @@ class VolumetricRNFLPredictor:
             else:
                 base_channels = 16
 
-        channels = ckpt_args.get('channels', None)
-        if channels is None:
+        raw_channels = ckpt_args.get('channels', None)
+        if raw_channels and isinstance(raw_channels, str) and raw_channels.strip():
+            channels = tuple(int(c.strip()) for c in raw_channels.split(','))
+        elif raw_channels and isinstance(raw_channels, (list, tuple)) and len(raw_channels) >= 2:
+            channels = tuple(raw_channels)
+        else:
             channels = tuple(base_channels * (2**i) for i in range(5))
+
         num_res_units = ckpt_args.get('num_res_units', 2)
 
         model = VolumetricRNFLNet(
