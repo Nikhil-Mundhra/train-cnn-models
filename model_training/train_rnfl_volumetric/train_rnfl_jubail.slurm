@@ -77,6 +77,7 @@ echo "=================================================================="
     --dataset_root "${DATASET_ROOT}" \
     --val_subjects "BEH0335,BEH0314,BEH0086" \
     --epochs 20 \
+    --base_channels 32 \
     --batch_size 32 \
     --accum_steps 2 \
     --lr 5e-4 \

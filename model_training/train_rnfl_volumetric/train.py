@@ -143,13 +143,20 @@ def train(args):
     os.makedirs(args.checkpoint_dir, exist_ok=True)
 
     # 1. Subject-level Dataset Partitioning
-    all_subjects = [
-        'BEH0174', 'BEH0181', 'BEH0310', 'BEH0314', 'BEH0321',
-        'BEH0335', 'BEH0349', 'BEH0354', 'BEH0364', 'BEH0398', 'BEH0410'
-    ]
-    val_subjects = args.val_subjects.split(',')
+    tsv_good_dir = os.path.join(args.dataset_root, "tsv", "good")
+    if os.path.exists(tsv_good_dir):
+        all_subjects = sorted([d for d in os.listdir(tsv_good_dir) if os.path.isdir(os.path.join(tsv_good_dir, d)) and not d.startswith('.')])
+    else:
+        all_subjects = [
+            'BEH0086', 'BEH0090', 'BEH0096', 'BEH0174', 'BEH0181', 'BEH0185',
+            'BEH0241', 'BEH0249', 'BEH0259', 'BEH0264', 'BEH0282', 'BEH0284',
+            'BEH0287', 'BEH0294', 'BEH0310', 'BEH0314', 'BEH0321', 'BEH0335',
+            'BEH0349', 'BEH0354', 'BEH0364', 'BEH0398', 'BEH0410'
+        ]
+    val_subjects = [s.strip() for s in args.val_subjects.split(',') if s.strip()]
     train_subjects = [s for s in all_subjects if s not in val_subjects]
 
+    print(f"[Training] Total Cohort Pool: {len(all_subjects)} subjects")
     print(f"[Training] Training Subjects ({len(train_subjects)}): {train_subjects}")
     print(f"[Training] Validation Subjects ({len(val_subjects)}): {val_subjects}")
 
@@ -180,13 +187,23 @@ def train(args):
     )
 
     # 2. Instantiate Model, Loss, Optimizer
+    if args.channels:
+        model_channels = tuple(int(c.strip()) for c in args.channels.split(','))
+    else:
+        b = args.base_channels
+        model_channels = (b, b * 2, b * 4, b * 8, b * 16)
+
+    print(f"[Architecture] Initializing VolumetricRNFLNet (base_channels={args.base_channels}, channels={model_channels}, res_units={args.num_res_units})...")
     model = VolumetricRNFLNet(
         in_channels=args.context_slices,
-        base_channels=16,
-        channels=(16, 32, 64, 128, 256),
+        base_channels=args.base_channels,
+        channels=model_channels,
         strides=(2, 2, 2, 2),
-        num_res_units=2
+        num_res_units=args.num_res_units
     ).to(device)
+
+    total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"[Architecture] Trainable Parameters: {total_params:,}")
 
     criterion = VolumetricRNFLLoss().to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -340,6 +357,9 @@ if __name__ == "__main__":
                         help="Training precision: bf16 (bfloat16, recommended for MPS), fp16 (float16 with GradScaler), or fp32")
     parser.add_argument("--resume_checkpoint", type=str, default="",
                         help="Path to pre-trained checkpoint to resume or fine-tune from")
+    parser.add_argument("--base_channels", type=int, default=16, help="Base channel multiplier (16 -> ~1.67M params, 32 -> ~6.6M params)")
+    parser.add_argument("--channels", type=str, default="", help="Comma-separated channel counts across stages (e.g. '32,64,128,256,512')")
+    parser.add_argument("--num_res_units", type=int, default=2, help="Number of residual units per stage")
     parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints/train_rnfl_volumetric")
     parser.add_argument("--log_interval", type=int, default=100)
     args = parser.parse_args()
