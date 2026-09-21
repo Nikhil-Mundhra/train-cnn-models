@@ -158,43 +158,54 @@ This generates:
 
 ## 6. Running Training on NYUAD HPC (Jubail Cluster)
 
-Training runs directly on the NYUAD Jubail HPC cluster using SLURM, NVIDIA GPU acceleration, and **Jubail's pre-installed `monai/0.8.0` module** (zero `pip install`, zero downloads).
+Training runs directly on the NYUAD Jubail HPC cluster using SLURM, NVIDIA GPU acceleration, and the dedicated PyTorch CUDA environment on scratch.
 
-### Cluster Architecture & Policy
-* **Pre-Built Module**: We reuse Jubail's pre-installed `module load monai/0.8.0`, which automatically executes inside the cluster's pre-built Singularity container bundling PyTorch 1.8.1, MONAI, and CUDA.
-* **Zero `pip install` / Zero Downloads**: No external Docker Hub pulling or pip installs are needed.
-* **Data Storage (`/scratch/`)**: All datasets and output checkpoints reside in `/scratch/nm4358/`.
-* **Partition**: `#SBATCH -p nvidia` with `--gres=gpu:1`.
+### Cluster Architecture & Environment
+* **Python & PyTorch Environment**: `/scratch/nm4358/envs/oct-env/bin/python` (PyTorch 2.8.0 + CUDA 12.8).
+* **Data Storage (`/scratch/`)**: Full 23-subject cohort (46 paired volumes) at `/scratch/nm4358/deidentified/`. Output checkpoints saved to `/scratch/nm4358/checkpoints/`.
+* **Repository Location**: `~/train-cnn-models` (code resides in `/home`, fast I/O data resides on `/scratch`).
+* **Partition & Resources**: `#SBATCH -p nvidia` with `--gres=gpu:a100:1` (or `--gres=gpu:1`), `-c 8` CPU cores, and `--mem=32G`.
 
 ### Step 1: Transfer Dataset to Jubail Scratch
 From your local terminal:
 ```bash
-rsync -avP /Users/nikhilmundhra/Library/CloudStorage/Box-Box/deidentified/ \
+rsync -avhP "/Users/nikhilmundhra/Library/CloudStorage/Box-Box/deidentified/" \
     nm4358@jubail.abudhabi.nyu.edu:/scratch/nm4358/deidentified/
 ```
 
-### Step 2: Connect to Jubail & Pull Latest Code
-SSH into Jubail:
+### Step 2: Interactive GPU Smoke Test (Recommended)
+Before launching a multi-hour batch job, verify CUDA acceleration and data loading interactively:
 ```bash
-ssh nm4358@jubail.abudhabi.nyu.edu
-cd ~/train-cnn-models && git pull origin main
+# 1. Allocate a temporary interactive GPU node (15 min)
+salloc -p nvidia --gres=gpu:1 -c 4 -t 00:15:00
+
+# 2. Run quick sanity test
+/scratch/nm4358/envs/oct-env/bin/python -c "
+import torch
+print('CUDA Available:', torch.cuda.is_available(), '| Device:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None')
+"
+
+# 3. Exit interactive node
+exit
 ```
 
 ### Step 3: Submit the SLURM Batch Job
 ```bash
+cd ~/train-cnn-models
+git pull origin main
+
 cd ~/train-cnn-models/model_training/train_rnfl_volumetric
 sbatch train_rnfl_jubail.slurm
 ```
 
-The batch script automatically:
-1. Loads `monai/0.8.0` (which triggers Jubail's pre-built Singularity container).
-2. Requests 1x NVIDIA GPU on partition `nvidia`.
-3. Runs the multi-epoch training script directly with `monai python`.
-
-### Step 4: Monitor the Job
+### Step 4: Monitor the Job & GPU Utilization
 ```bash
 # Check queue status
 squeue -u nm4358
+
+# Monitor real-time GPU utilization (NYUAD CRC tool)
+# Note: Jubail auto-terminates jobs if GPU utilization drops below 5% for 2 consecutive hours!
+gutil <JOB_ID>
 
 # Follow live training logs
 tail -f slurm_rnfl_*.out
@@ -203,9 +214,8 @@ tail -f slurm_rnfl_*.out
 ### Step 5: Retrieve Checkpoints to Local Machine
 Once training completes, download the best model weights back to your local machine:
 ```bash
-# Run on your local machine:
 mkdir -p ./checkpoints/jubail_run
-rsync -avP nm4358@jubail.abudhabi.nyu.edu:/scratch/nm4358/checkpoints/rnfl_volumetric_*/best_volumetric_rnfl_net.pt ./checkpoints/jubail_run/
+rsync -avhP nm4358@jubail.abudhabi.nyu.edu:/scratch/nm4358/checkpoints/rnfl_volumetric_*/best_volumetric_rnfl_net.pt ./checkpoints/jubail_run/
 ```
 
 
