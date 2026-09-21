@@ -216,8 +216,27 @@ class VolumetricRNFLPredictor:
     @classmethod
     def from_checkpoint(cls, checkpoint_path: str, device: torch.device, batch_size: int = 8) -> "VolumetricRNFLPredictor":
         ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
-        model = VolumetricRNFLNet(in_channels=5, base_channels=16).to(device)
-        model.load_state_dict(ckpt['model_state_dict'])
+        ckpt_args = ckpt.get('args', {})
+        base_channels = ckpt_args.get('base_channels')
+        state_dict = ckpt.get('model_state_dict', ckpt)
+        if base_channels is None:
+            if 'mask_head.weight' in state_dict:
+                base_channels = state_dict['mask_head.weight'].shape[1]
+            else:
+                base_channels = 16
+
+        channels = ckpt_args.get('channels', None)
+        if channels is None:
+            channels = tuple(base_channels * (2**i) for i in range(5))
+        num_res_units = ckpt_args.get('num_res_units', 2)
+
+        model = VolumetricRNFLNet(
+            in_channels=5,
+            base_channels=base_channels,
+            channels=channels,
+            num_res_units=num_res_units
+        ).to(device)
+        model.load_state_dict(state_dict)
         model.eval()
         return cls(model=model, device=device, batch_size=batch_size)
 
