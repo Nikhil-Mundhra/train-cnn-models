@@ -327,14 +327,14 @@ span[style*="#d97706"] code, span[style*="#d97706"] {{
 **Execution Environment**: NYUAD HPC Jubail (SLURM Job `{job_id}`) | Checkpoint: `{checkpoint_name}`  
 **Architecture / Variant**: **{model_variant} Architecture** ({model_desc})  
 **Evaluation Arms**:
-- **Cyan**: Clinician-Corrected Reference Algorithm (Good Arm)
-- **Red**: Commercial Solix Heuristic Baseline (Bad Arm)
-- **Green**: Multi-Task Volumetric U-Net ({model_variant} Model, 2.5D Context + Continuous 1D Boundary Regression)
-- **<span style="color: #d97706; font-weight: bold;">Orange</span>**: Held-Out Validation Cohort (<span style="color: #d97706; font-weight: bold;">{val_subjs_str}</span>, {len(val_scans)} Scans Unseen During Training)
+- **<span style="color: #0284c7; font-weight: bold;">Cyan</span>**: Clinician-Corrected Reference Algorithm (Good Arm)
+- **<span style="color: #dc2626; font-weight: bold;">Red</span>**: Commercial Solix Heuristic Baseline (Bad Arm)
+- **<span style="color: #16a34a; font-weight: bold;">Green</span>**: Multi-Task Volumetric U-Net ({model_variant} Model, 2.5D Context + Continuous 1D Boundary Regression)
+- **<span style="color: #ea580c; font-weight: bold;">Orange</span>**: Held-Out Validation Cohort (<span style="color: #ea580c; font-weight: bold;">{val_subjs_str}</span>, {len(val_scans)} Scans Unseen During Training)
 
 ## 1. Executive Summary
 
-This report delivers an automated cohort-wide comparative evaluation of the **Multi-Task Volumetric RNFL U-Net ({model_variant} Model - Green)** against the **Clinician Reference Algorithm (Cyan)** and the **Commercial Solix Baseline (Red)** across {len(all_subjects)} subjects ({n_scans} eye-level OCT volumes) executed end-to-end on NYUAD Jubail.
+This report delivers an automated cohort-wide comparative evaluation of the **Multi-Task Volumetric RNFL U-Net (<span style="color: #16a34a; font-weight: bold;">Green</span>)** against the **Clinician Reference Algorithm (<span style="color: #0284c7; font-weight: bold;">Cyan</span>)** and the **Commercial Solix Baseline (<span style="color: #dc2626; font-weight: bold;">Red</span>)** across {len(all_subjects)} subjects ({n_scans} eye-level OCT volumes) executed end-to-end on NYUAD Jubail.
 
 ### High-Level Findings:
 1. **Benchmark Cohort Performance**: Across the {len(bench_scans)} benchmark acquisitions, the volumetric U-Net achieved a mean peripapillary absolute boundary error (**MABE**) of **${stats_bench_all_mabe['mean']:.2f} \\pm {stats_bench_all_mabe['std']:.2f} \\; \\mu\\text{{m}}$** (median: ${stats_bench_all_mabe['median']:.2f} \\; \\mu\\text{{m}}$, IQR: ${stats_bench_all_mabe['iqr']:.2f} \\; \\mu\\text{{m}}$) and a mean Dice score of **${stats_bench_all_dice['mean']:.4f} \\pm {stats_bench_all_dice['std']:.4f}$** (median: ${stats_bench_all_dice['median']:.4f}$).
@@ -429,7 +429,7 @@ The multi-panel cohort benchmark chart below summarizes the full distribution of
 
 ## 5. Cohort Visual Gallery: All Evaluated Subjects
 
-Central peripapillary B-scans ($z = z_{{\\text{{disc}}}}$) comparing the **Clinician Reference (Cyan)**, **Commercial Heuristic Baseline (Red)**, and the **Volumetric U-Net (Green)**.
+Central peripapillary B-scans ($z = z_{{\\text{{disc}}}}$) comparing the **Clinician Reference (<span style="color: #0284c7; font-weight: bold;">Cyan</span>)**, **Commercial Heuristic Baseline (<span style="color: #dc2626; font-weight: bold;">Red</span>)**, and the **Volumetric U-Net (<span style="color: #16a34a; font-weight: bold;">Green</span>)**.
 
 <div class="gallery-grid">
 """
@@ -469,7 +469,7 @@ Detailed cross-sectional analysis comparing optical intensity boundaries, vertic
 
     md += f"""## 7. Algorithmic Mechanics Driving Boundary Adherence
 
-| Challenge | Commercial Solix Baseline (Red) | Multi-Task Volumetric U-Net (Green) | Clinician Ground Truth (Cyan) |
+| Challenge | Commercial Solix Baseline (<span style="color: #dc2626; font-weight: bold;">Red</span>) | Multi-Task Volumetric U-Net (<span style="color: #16a34a; font-weight: bold;">Green</span>) | Clinician Ground Truth (<span style="color: #0284c7; font-weight: bold;">Cyan</span>) |
 | :--- | :--- | :--- | :--- |
 | **GCL Hyporeflective Wedge** | Plunges into hyporeflective ganglion cell layer. | Follows true hyperreflective optical gradient. | Manually delineated anatomical boundary. |
 | **Optic Cup Cavity Void** | Bridges straight across empty cup space. | 1D Cup head detects termination at BMO. | Strict anatomical BMO margin cut. |
