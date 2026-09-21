@@ -6,11 +6,11 @@
 # ==============================================================================
 
 #SBATCH -p nvidia                      # Request GPU partition (nvidia)
-#SBATCH --gres=gpu:1                   # Request 1 GPU: uses --gres=gpu:1 (any free GPU) or --gres=gpu:a100:1 or --gres=gpu:v100:1
+#SBATCH --gres=gpu:a100:1              # Request 1 NVIDIA A100 GPU (or use --gres=gpu:1 for any available GPU)
 #SBATCH -n 1                           # 1 task
-#SBATCH -c 8                           # 8 CPU cores for fast data loading
+#SBATCH -c 8                           # 8 CPU cores for fast parallel data loading
 #SBATCH --mem=32G                      # 32 GB RAM
-#SBATCH -t 02:00:00                    # Wall clock time limit (2 hours is plenty; ~20-30 min actual run)
+#SBATCH -t 04:00:00                    # Wall clock time limit (4 hours)
 #SBATCH -J rnfl_train                  # Job name
 #SBATCH -o slurm_rnfl_%j.out           # Standard output log (%j expands to jobID)
 #SBATCH -e slurm_rnfl_%j.err           # Standard error log
@@ -23,20 +23,27 @@ echo "=== Job ID: ${SLURM_JOB_ID} | Allocated GPU: ${CUDA_VISIBLE_DEVICES} ==="
 echo "=================================================================="
 
 # ----------------------------------------------------------------------
-# 1. Environment & Module Setup (NYUAD Pre-Installed MONAI & Singularity)
+# 1. Environment Setup (Using Verified Conda Env on Scratch)
 # ----------------------------------------------------------------------
-# Reuses Jubail's pre-built MONAI & PyTorch container in /share/apps/NYUAD5
-# Zero pip install, zero download, instant launch.
 module purge
-module load monai/0.8.0
+
+NETID="${USER}"
+SCRATCH_DIR="/scratch/${NETID}"
+PYTHON_BIN="${SCRATCH_DIR}/envs/oct-env/bin/python"
+
+if [ ! -x "${PYTHON_BIN}" ]; then
+    echo "[ERROR] Python interpreter not found or not executable at: ${PYTHON_BIN}"
+    exit 1
+fi
+
+echo "Python Executable: ${PYTHON_BIN}"
+"${PYTHON_BIN}" -c "import torch; print('PyTorch:', torch.__version__, '| CUDA Available:', torch.cuda.is_available(), '| Device:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None')"
 
 # ----------------------------------------------------------------------
 # 2. Paths Configuration (Data & Outputs on Scratch, Code in Home)
 # ----------------------------------------------------------------------
 # Soumen's Rule: Data MUST live on fast parallel /scratch filesystem,
 # code and repositories live in /home.
-NETID="${USER}"
-SCRATCH_DIR="/scratch/${NETID}"
 DATASET_ROOT="${SCRATCH_DIR}/deidentified"
 CHECKPOINT_DIR="${SCRATCH_DIR}/checkpoints/rnfl_volumetric_${SLURM_JOB_ID}"
 OUTPUT_DIR="${SCRATCH_DIR}/predictions_${SLURM_JOB_ID}"
@@ -63,13 +70,13 @@ fi
 # 3. Launch Multi-Epoch Volumetric Training on GPU
 # ----------------------------------------------------------------------
 echo "=================================================================="
-echo "=== Launching Volumetric RNFL Training on GPU via Jubail Module ==="
+echo "=== Launching Volumetric RNFL Training on GPU                  ==="
 echo "=================================================================="
 
-monai python "${SCRIPT_PATH}" \
+"${PYTHON_BIN}" "${SCRIPT_PATH}" \
     --dataset_root "${DATASET_ROOT}" \
-    --val_subjects "BEH0335,BEH0314" \
-    --epochs 15 \
+    --val_subjects "BEH0335,BEH0314,BEH0086" \
+    --epochs 20 \
     --batch_size 8 \
     --accum_steps 2 \
     --lr 3e-4 \
