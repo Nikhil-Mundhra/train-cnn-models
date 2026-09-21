@@ -77,12 +77,12 @@ echo "=================================================================="
     --dataset_root "${DATASET_ROOT}" \
     --val_subjects "BEH0335,BEH0314,BEH0086" \
     --epochs 20 \
-    --batch_size 8 \
+    --batch_size 32 \
     --accum_steps 2 \
-    --lr 3e-4 \
+    --lr 5e-4 \
     --weight_decay 1e-4 \
     --context_slices 5 \
-    --num_workers 4 \
+    --num_workers 6 \
     --device "cuda" \
     --checkpoint_dir "${CHECKPOINT_DIR}" \
     --log_interval 50
