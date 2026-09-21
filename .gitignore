@@ -42,10 +42,17 @@ docker-compose.override.yml
 graphify-out/
 
 # Ignore image assets
-**/*.png
 *.png
-*jpeg
+**/*.png
 *.jpg
+**/*.jpg
+*.jpeg
+**/*.jpeg
+*.gif
+*.bmp
+*.tiff
+*.tif
+*.webp
 *.zip
 
 # Next.js build output
