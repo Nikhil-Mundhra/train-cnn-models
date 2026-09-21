@@ -229,7 +229,9 @@ def generate_markdown_report(
     metrics_data: Dict[str, Any],
     assets_rel_dir: str,
     job_id: str,
-    checkpoint_name: str
+    checkpoint_name: str,
+    model_variant: str = "Volumetric",
+    model_desc: str = ""
 ) -> str:
     scans: List[Dict[str, Any]] = metrics_data.get('scans', [])
     gallery: List[Dict[str, Any]] = metrics_data.get('gallery', [])
@@ -318,20 +320,21 @@ span[style*="#d97706"] code, span[style*="#d97706"] {{
 }}
 </style>
 
-# Volumetric RNFL Segmentation: Multi-Subject Cohort Evaluation Report
+# Volumetric RNFL Segmentation ({model_variant} Model): Multi-Subject Cohort Report
 
 **Cohort Scope**: {len(all_subjects)} Subjects (`{all_subjects[0]}` – `{all_subjects[-1]}`) | {n_scans} OCT Volumes ({n_od} OD + {n_os} OS)  
 **Modality**: Optovue Solix OCT `Disc Cube` ($320 \\times 768 \\times 320$ voxels; $18.81\\,\\mu\\text{{m}} \\times 3.12\\,\\mu\\text{{m}} \\times 18.75\\,\\mu\\text{{m}}$)  
 **Execution Environment**: NYUAD HPC Jubail (SLURM Job `{job_id}`) | Checkpoint: `{checkpoint_name}`  
+**Architecture / Variant**: **{model_variant} Architecture** ({model_desc})  
 **Evaluation Arms**:
 - **Cyan**: Clinician-Corrected Reference Algorithm (Good Arm)
 - **Red**: Commercial Solix Heuristic Baseline (Bad Arm)
-- **Green**: Multi-Task Volumetric U-Net (2.5D Context + Continuous 1D Boundary Regression)
+- **Green**: Multi-Task Volumetric U-Net ({model_variant} Model, 2.5D Context + Continuous 1D Boundary Regression)
 - **<span style="color: #d97706; font-weight: bold;">Orange</span>**: Held-Out Validation Cohort (<span style="color: #d97706; font-weight: bold;">{val_subjs_str}</span>, {len(val_scans)} Scans Unseen During Training)
 
 ## 1. Executive Summary
 
-This report delivers an automated cohort-wide comparative evaluation of the **Multi-Task Volumetric RNFL U-Net (Green)** against the **Clinician Reference Algorithm (Cyan)** and the **Commercial Solix Baseline (Red)** across {len(all_subjects)} subjects ({n_scans} eye-level OCT volumes) executed end-to-end on NYUAD Jubail.
+This report delivers an automated cohort-wide comparative evaluation of the **Multi-Task Volumetric RNFL U-Net ({model_variant} Model - Green)** against the **Clinician Reference Algorithm (Cyan)** and the **Commercial Solix Baseline (Red)** across {len(all_subjects)} subjects ({n_scans} eye-level OCT volumes) executed end-to-end on NYUAD Jubail.
 
 ### High-Level Findings:
 1. **Benchmark Cohort Performance**: Across the {len(bench_scans)} benchmark acquisitions, the volumetric U-Net achieved a mean peripapillary absolute boundary error (**MABE**) of **${stats_bench_all_mabe['mean']:.2f} \\pm {stats_bench_all_mabe['std']:.2f} \\; \\mu\\text{{m}}$** (median: ${stats_bench_all_mabe['median']:.2f} \\; \\mu\\text{{m}}$, IQR: ${stats_bench_all_mabe['iqr']:.2f} \\; \\mu\\text{{m}}$) and a mean Dice score of **${stats_bench_all_dice['mean']:.4f} \\pm {stats_bench_all_dice['std']:.4f}$** (median: ${stats_bench_all_dice['median']:.4f}$).
@@ -493,6 +496,8 @@ def main():
     parser.add_argument("--output_pdf", type=str, default=None, help="Optional path for destination PDF report")
     parser.add_argument("--job_id", type=str, default="local", help="SLURM Job ID")
     parser.add_argument("--checkpoint_name", type=str, default="latest", help="Checkpoint description")
+    parser.add_argument("--model_variant", type=str, default="Volumetric", help="Model variant label (e.g. Light, Heavy)")
+    parser.add_argument("--model_desc", type=str, default="", help="Detailed architecture description")
     args = parser.parse_args()
 
     if not os.path.exists(args.metrics_json):
@@ -509,12 +514,14 @@ def main():
     except ValueError:
         assets_rel = assets_abs
 
-    print(f"[Report Builder] Rendering Markdown report for Job {args.job_id}...")
+    print(f"[Report Builder] Rendering Markdown report for Job {args.job_id} ({args.model_variant})...")
     md_content = generate_markdown_report(
         metrics_data=metrics_data,
         assets_rel_dir=assets_rel,
         job_id=args.job_id,
-        checkpoint_name=args.checkpoint_name
+        checkpoint_name=args.checkpoint_name,
+        model_variant=args.model_variant,
+        model_desc=args.model_desc
     )
 
     os.makedirs(md_dir, exist_ok=True)
