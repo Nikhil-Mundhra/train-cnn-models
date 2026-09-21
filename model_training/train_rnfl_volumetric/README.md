@@ -173,7 +173,14 @@ rsync -avhP "/Users/nikhilmundhra/Library/CloudStorage/Box-Box/deidentified/" \
     nm4358@jubail.abudhabi.nyu.edu:/scratch/nm4358/deidentified/
 ```
 
-### Step 2: Interactive GPU Smoke Test (Recommended)
+### Step 2: Connect to Jubail & Pull Latest Code
+SSH into Jubail login node and update repository:
+```bash
+ssh nm4358@jubail.abudhabi.nyu.edu
+cd ~/train-cnn-models && git pull origin main
+```
+
+### Step 3: Interactive GPU Smoke Test (Recommended)
 Before launching a multi-hour batch job, verify CUDA acceleration and data loading interactively:
 ```bash
 # 1. Allocate a temporary interactive GPU node (15 min)
@@ -189,16 +196,13 @@ print('CUDA Available:', torch.cuda.is_available(), '| Device:', torch.cuda.get_
 exit
 ```
 
-### Step 3: Submit the SLURM Batch Job
+### Step 4: Submit the SLURM Batch Job
 ```bash
-cd ~/train-cnn-models
-git pull origin main
-
 cd ~/train-cnn-models/model_training/train_rnfl_volumetric
 sbatch train_rnfl_jubail.slurm
 ```
 
-### Step 4: Monitor the Job & GPU Utilization
+### Step 5: Monitor the Job & GPU Utilization
 ```bash
 # Check queue status
 squeue -u nm4358
@@ -211,7 +215,7 @@ gutil <JOB_ID>
 tail -f slurm_rnfl_*.out
 ```
 
-### Step 5: Retrieve Checkpoints to Local Machine
+### Step 6: Retrieve Checkpoints to Local Machine
 Once training completes, download the best model weights back to your local machine:
 ```bash
 mkdir -p ./checkpoints/jubail_run
