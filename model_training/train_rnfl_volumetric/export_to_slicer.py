@@ -35,13 +35,14 @@ def run_volumetric_inference(
     num_bscans=320,
     rows=768,
     cols=320,
-    threshold=0.5
+    threshold=0.40,
+    biplanar_fusion=True
 ):
     model.eval()
     half_ctx = context_slices // 2
-    full_vol_mask = np.zeros((num_bscans, rows, cols), dtype=np.uint8)
+    is_os = ("_OS_" in os.path.basename(dcm_path))
 
-    print(f"[Inference] Processing {num_bscans} B-scans from {os.path.basename(dcm_path)} on {device}...")
+    print(f"[Inference] Processing {num_bscans} B-scans from {os.path.basename(dcm_path)} on {device} (Bi-Planar Fusion: {biplanar_fusion})...")
 
     # Fast memory-mapped DICOM slice reading
     offset = find_dicom_pixel_offset(dcm_path)
@@ -50,7 +51,12 @@ def run_volumetric_inference(
     autocast_device = "mps" if "mps" in str(device) else ("cuda" if "cuda" in str(device) else "cpu")
     use_amp = "mps" in str(device) or "cuda" in str(device)
 
-    # Process in batches
+    # 1. Pass 1: Horizontal B-Scan Pane (Y-axis 2.5D stacks)
+    horiz_probs = np.zeros((num_bscans, rows, cols), dtype=np.float32)
+    horiz_ilm = np.zeros((num_bscans, cols), dtype=np.float32)
+    horiz_nfl = np.zeros((num_bscans, cols), dtype=np.float32)
+    horiz_cup = np.zeros((num_bscans, cols), dtype=np.float32)
+
     for start_idx in range(0, num_bscans, batch_size):
         end_idx = min(start_idx + batch_size, num_bscans)
         batch_slices = []
@@ -62,6 +68,8 @@ def run_volumetric_inference(
             ]
             stack = [memmap[s_idx] for s_idx in slice_indices]
             img_stack = np.stack(stack, axis=0).astype(np.float32) / 2560.0
+            if is_os:
+                img_stack = np.flip(img_stack, axis=-1).copy()
             batch_slices.append(img_stack)
 
         batch_tensor = torch.from_numpy(np.stack(batch_slices, axis=0)).to(device)
@@ -71,21 +79,76 @@ def run_volumetric_inference(
                 preds = model(batch_tensor)
                 probs = torch.sigmoid(preds['mask_logits']).squeeze(1).float().cpu().numpy()
                 cup_probs = torch.sigmoid(preds['cup_logits']).float().cpu().numpy()
-            binary_masks = (probs > threshold).astype(np.uint8)
+                ilm_preds = preds['ilm_pred'].float().cpu().numpy()
+                nfl_preds = preds['nfl_pred'].float().cpu().numpy()
 
-            # -------------------------------------------------------------------------
-            # [KEPT FOR LATER REFERENCE - RPE ENDPOINT DETECTION]
-            # Rn we're detecting the end of the RPE, kept commented for later use:
-            # for i in range(binary_masks.shape[0]):
-            #     cup_cols = np.where(cup_probs[i] > 0.5)[0]
-            #     if len(cup_cols) > 0:
-            #         bmo_left = cup_cols[0]
-            #         bmo_right = cup_cols[-1]
-            #         # Vertically crop mask inside BMO optic cup cavity
-            #         binary_masks[i, :, bmo_left:bmo_right + 1] = 0
-            # -------------------------------------------------------------------------
+        if is_os:
+            probs = np.flip(probs, axis=-1).copy()
+            ilm_preds = np.flip(ilm_preds, axis=-1).copy()
+            nfl_preds = np.flip(nfl_preds, axis=-1).copy()
+            cup_probs = np.flip(cup_probs, axis=-1).copy()
 
-        full_vol_mask[start_idx:end_idx] = binary_masks
+        horiz_probs[start_idx:end_idx] = probs
+        horiz_ilm[start_idx:end_idx] = ilm_preds
+        horiz_nfl[start_idx:end_idx] = nfl_preds
+        horiz_cup[start_idx:end_idx] = cup_probs
+
+    # 2. Pass 2: Vertical B-Scan Pane (X-axis 2.5D stacks)
+    if biplanar_fusion:
+        vert_probs = np.zeros((num_bscans, rows, cols), dtype=np.float32)
+        vert_ilm = np.zeros((cols, num_bscans), dtype=np.float32)
+        vert_nfl = np.zeros((cols, num_bscans), dtype=np.float32)
+        vert_cup = np.zeros((cols, num_bscans), dtype=np.float32)
+
+        for start_a in range(0, cols, batch_size):
+            end_a = min(start_a + batch_size, cols)
+            batch_slices = []
+            for a_idx in range(start_a, end_a):
+                eff_a = (cols - 1 - a_idx) if is_os else a_idx
+                slice_indices = [min(max(eff_a + o, 0), cols - 1) for o in range(-half_ctx, half_ctx + 1)]
+                stack = [memmap[:, :, s].T for s in slice_indices]
+                img_stack = np.stack(stack, axis=0).astype(np.float32) / 2560.0
+                batch_slices.append(img_stack)
+
+            batch_tensor = torch.from_numpy(np.stack(batch_slices, axis=0)).to(device)
+
+            with torch.no_grad():
+                with torch.autocast(device_type=autocast_device, dtype=torch.bfloat16, enabled=use_amp):
+                    preds = model(batch_tensor)
+                    v_probs = torch.sigmoid(preds['mask_logits']).squeeze(1).float().cpu().numpy()
+                    v_cup = torch.sigmoid(preds['cup_logits']).float().cpu().numpy()
+                    v_ilm = preds['ilm_pred'].float().cpu().numpy()
+                    v_nfl = preds['nfl_pred'].float().cpu().numpy()
+
+            for i, a_idx in enumerate(range(start_a, end_a)):
+                vert_probs[:, :, a_idx] = v_probs[i].T
+                vert_ilm[a_idx, :] = v_ilm[i]
+                vert_nfl[a_idx, :] = v_nfl[i]
+                vert_cup[a_idx, :] = v_cup[i]
+
+        # Fused multi-planar representations
+        fused_probs = 0.5 * (horiz_probs + vert_probs)
+        fused_ilm = 0.5 * (horiz_ilm + vert_ilm.T)
+        fused_nfl = 0.5 * (horiz_nfl + vert_nfl.T)
+        fused_cup = 0.5 * (horiz_cup + vert_cup.T)
+    else:
+        fused_probs = horiz_probs
+        fused_ilm = horiz_ilm
+        fused_nfl = horiz_nfl
+        fused_cup = horiz_cup
+
+    # 3. Dense Segmentation & Hybrid Surface-Guided Recovery
+    full_vol_mask = (fused_probs > threshold).astype(np.uint8)
+
+    for b in range(num_bscans):
+        col_sums = full_vol_mask[b].sum(axis=0)
+        valid_tissue = (fused_cup[b] < 0.5) & ((fused_nfl[b] - fused_ilm[b]) >= 2.0)
+        dropouts = np.where((col_sums == 0) & valid_tissue)[0]
+        for x in dropouts:
+            y0 = int(np.clip(np.round(fused_ilm[b, x]), 0, rows))
+            y1 = int(np.clip(np.round(fused_nfl[b, x]), 0, rows))
+            if y1 > y0:
+                full_vol_mask[b, y0:y1, x] = 1
 
     # -------------------------------------------------------------------------
     # Optic Disc Size & Anatomical Vertical Cut

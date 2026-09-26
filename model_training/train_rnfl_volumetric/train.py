@@ -40,9 +40,9 @@ def compute_batch_metrics(preds, targets):
     - Cup absence classification IoU
     """
     with torch.no_grad():
-        # 1. Mask Dice
+        # 1. Mask Dice with calibrated threshold (0.40) to preserve thin peripheral sheets
         prob = torch.sigmoid(preds['mask_logits'])
-        pred_mask = (prob > 0.5).float()
+        pred_mask = (prob > 0.40).float()
         true_mask = targets['mask']
 
         intersection = (pred_mask * true_mask).sum().item()
@@ -163,12 +163,14 @@ def train(args):
     train_ds = SolixRNFLDataset(
         dataset_root=args.dataset_root,
         subjects=train_subjects,
-        context_slices=args.context_slices
+        context_slices=args.context_slices,
+        enable_orthogonal=args.enable_orthogonal
     )
     val_ds = SolixRNFLDataset(
         dataset_root=args.dataset_root,
         subjects=val_subjects,
-        context_slices=args.context_slices
+        context_slices=args.context_slices,
+        enable_orthogonal=False  # Keep validation on standard clinical B-scan planes
     )
 
     train_loader = DataLoader(
@@ -230,6 +232,7 @@ def train(args):
             return nullcontext()
 
     best_peri_mabe = float('inf')
+    best_score = float('inf')
     best_checkpoint_path = os.path.join(args.checkpoint_dir, "best_volumetric_rnfl_net.pt")
     training_start_time = time.time()
 
@@ -281,10 +284,12 @@ def train(args):
                 step_elapsed = time.time() - t0
                 speed = ((step + 1) * args.batch_size) / step_elapsed
                 edge_val = loss_dict.get('loss_edge', torch.tensor(0.0)).item()
+                overlap_val = loss_dict.get('loss_overlap', loss_dict.get('loss_dice', torch.tensor(0.0))).item()
+                thick_val = loss_dict.get('loss_thick', torch.tensor(0.0)).item()
                 print(
                     f"Epoch [{epoch}/{args.epochs}] Step [{step+1}/{len(train_loader)}] "
                     f"Loss: {loss_dict['loss'].item():.2f} "
-                    f"(Dice: {loss_dict['loss_dice'].item():.3f}, Bnd: {loss_dict['loss_boundary'].item():.1f} um, Edge: {edge_val:.3f}) | "
+                    f"(Overlap: {overlap_val:.3f}, Thick: {thick_val:.1f} um, Bnd: {loss_dict['loss_boundary'].item():.1f} um, Edge: {edge_val:.3f}) | "
                     f"Speed: {speed:.1f} slices/s",
                     flush=True
                 )
@@ -330,11 +335,14 @@ def train(args):
         }
         torch.save(ckpt_data, latest_checkpoint_path)
 
-        # Save Best Checkpoint
-        if val_metrics['peri_nfl_mabe'] < best_peri_mabe:
+        # Save Best Checkpoint: balanced score guarding against thin mask collapse
+        # Penalizes if Dice drops below 0.75 while optimizing peripapillary MABE
+        score = val_metrics['peri_nfl_mabe'] + 50.0 * max(0.0, 0.75 - val_metrics['dice'])
+        if score < best_score:
+            best_score = score
             best_peri_mabe = val_metrics['peri_nfl_mabe']
             torch.save(ckpt_data, best_checkpoint_path)
-            print(f"[Checkpoint] New best peripapillary NFL MABE ({best_peri_mabe:.2f} um) saved to {best_checkpoint_path}\n", flush=True)
+            print(f"[Checkpoint] New best balanced model (Score: {score:.2f} | Peri NFL MABE: {best_peri_mabe:.2f} um | Dice: {val_metrics['dice']:.4f}) saved to {best_checkpoint_path}\n", flush=True)
 
     print("\n==========================================================================================")
     print(f"=== TRAINING COMPLETE. Best Peripapillary NFL MABE: {best_peri_mabe:.2f} um ===")
@@ -360,6 +368,8 @@ if __name__ == "__main__":
     parser.add_argument("--base_channels", type=int, default=16, help="Base channel multiplier (16 -> ~1.67M params, 32 -> ~6.6M params)")
     parser.add_argument("--channels", type=str, default="", help="Comma-separated channel counts across stages (e.g. '32,64,128,256,512')")
     parser.add_argument("--num_res_units", type=int, default=2, help="Number of residual units per stage")
+    parser.add_argument("--enable_orthogonal", action="store_true", default=True, help="Enable orthogonal bi-planar vertical slicing during training")
+    parser.add_argument("--disable_orthogonal", dest="enable_orthogonal", action="store_false", help="Disable orthogonal bi-planar training")
     parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints/train_rnfl_volumetric")
     parser.add_argument("--log_interval", type=int, default=100)
     args = parser.parse_args()

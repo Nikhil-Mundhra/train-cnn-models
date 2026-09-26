@@ -245,11 +245,13 @@ class VolumetricRNFLPredictor:
         model.eval()
         return cls(model=model, device=device, batch_size=batch_size)
 
-    def predict(self, oct_volume: OCTVolume) -> VolumePrediction:
+    def predict(self, oct_volume: OCTVolume, biplanar_fusion: bool = True) -> VolumePrediction:
         """
-        Performs full 3D volumetric segmentation across all slices.
-        Standardizes OS (left eye) orientation during inference to match training distribution,
-        then maps predictions back to native patient coordinate space.
+        Performs full 3D volumetric segmentation.
+        When biplanar_fusion=True, evaluates orthogonal 2.5D stacks along BOTH:
+        1. Horizontal B-scan pane (Y-axis slicing)
+        2. Vertical A-scan pane (X-axis slicing)
+        Fuses predictions to eliminate directional blind spots and peripheral cutoffs.
         """
         is_os = (oct_volume.eye == "OS")
         memmap = oct_volume.memmap
@@ -257,10 +259,13 @@ class VolumetricRNFLPredictor:
         rows = oct_volume.rows
         cols = oct_volume.cols
 
-        full_mask = np.zeros((n_bscans, rows, cols), dtype=np.uint8)
-        full_ilm = np.zeros((n_bscans, cols), dtype=np.float32)
-        full_nfl = np.zeros((n_bscans, cols), dtype=np.float32)
-        full_cup = np.zeros((n_bscans, cols), dtype=np.float32)
+        # ---------------------------------------------------------------------
+        # Pass 1: Horizontal B-Scan Pane (Y-axis 2.5D stacks)
+        # ---------------------------------------------------------------------
+        full_horiz_probs = np.zeros((n_bscans, rows, cols), dtype=np.float32)
+        full_horiz_ilm = np.zeros((n_bscans, cols), dtype=np.float32)
+        full_horiz_nfl = np.zeros((n_bscans, cols), dtype=np.float32)
+        full_horiz_cup = np.zeros((n_bscans, cols), dtype=np.float32)
 
         for start_idx in range(0, n_bscans, self.batch_size):
             end_idx = min(start_idx + self.batch_size, n_bscans)
@@ -283,28 +288,80 @@ class VolumetricRNFLPredictor:
                     ilm_preds = preds['ilm_pred'].float().cpu().numpy()
                     nfl_preds = preds['nfl_pred'].float().cpu().numpy()
 
-            b_masks = (probs > 0.5).astype(np.uint8)
-
-            # -------------------------------------------------------------------------
-            # [KEPT FOR LATER REFERENCE - RPE ENDPOINT DETECTION]
-            # Rn we're detecting the end of the RPE, kept commented for later use:
-            # for i in range(b_masks.shape[0]):
-            #     cup_cols = np.where(cup_probs[i] > 0.5)[0]
-            #     if len(cup_cols) > 0:
-            #         b_masks[i, :, cup_cols[0]:cup_cols[-1] + 1] = 0
-            # -------------------------------------------------------------------------
-
-            # If OS: flip predictions back to native DICOM patient coordinates
             if is_os:
-                b_masks = np.flip(b_masks, axis=-1).copy()
+                probs = np.flip(probs, axis=-1).copy()
                 ilm_preds = np.flip(ilm_preds, axis=-1).copy()
                 nfl_preds = np.flip(nfl_preds, axis=-1).copy()
                 cup_probs = np.flip(cup_probs, axis=-1).copy()
 
-            full_mask[start_idx:end_idx] = b_masks
-            full_ilm[start_idx:end_idx] = ilm_preds
-            full_nfl[start_idx:end_idx] = nfl_preds
-            full_cup[start_idx:end_idx] = cup_probs
+            full_horiz_probs[start_idx:end_idx] = probs
+            full_horiz_ilm[start_idx:end_idx] = ilm_preds
+            full_horiz_nfl[start_idx:end_idx] = nfl_preds
+            full_horiz_cup[start_idx:end_idx] = cup_probs
+
+        # ---------------------------------------------------------------------
+        # Pass 2: Vertical B-Scan Pane (X-axis 2.5D stacks)
+        # ---------------------------------------------------------------------
+        if biplanar_fusion:
+            full_vert_probs = np.zeros((n_bscans, rows, cols), dtype=np.float32)
+            full_vert_ilm = np.zeros((cols, n_bscans), dtype=np.float32)
+            full_vert_nfl = np.zeros((cols, n_bscans), dtype=np.float32)
+            full_vert_cup = np.zeros((cols, n_bscans), dtype=np.float32)
+
+            for start_a in range(0, cols, self.batch_size):
+                end_a = min(start_a + self.batch_size, cols)
+                batch_slices = []
+                for a_idx in range(start_a, end_a):
+                    eff_a = (cols - 1 - a_idx) if is_os else a_idx
+                    slice_indices = [min(max(eff_a + o, 0), cols - 1) for o in range(-self.half_ctx, self.half_ctx + 1)]
+                    # Transpose (320, 768) -> (768, 320)
+                    stack = [memmap[:, :, s].T for s in slice_indices]
+                    img_stack = np.stack(stack, axis=0).astype(np.float32) / 2560.0
+                    batch_slices.append(img_stack)
+
+                batch_tensor = torch.from_numpy(np.stack(batch_slices, axis=0)).to(self.device)
+
+                with torch.no_grad():
+                    with torch.autocast(device_type=self.autocast_device, dtype=torch.bfloat16, enabled=self.use_amp):
+                        preds = self.model(batch_tensor)
+                        v_probs = torch.sigmoid(preds['mask_logits']).squeeze(1).float().cpu().numpy()
+                        v_cup = torch.sigmoid(preds['cup_logits']).float().cpu().numpy()
+                        v_ilm = preds['ilm_pred'].float().cpu().numpy()
+                        v_nfl = preds['nfl_pred'].float().cpu().numpy()
+
+                for i, a_idx in enumerate(range(start_a, end_a)):
+                    # Transpose (768, 320) -> (320, 768) to map (Z, Y) back to (Y, Z)
+                    full_vert_probs[:, :, a_idx] = v_probs[i].T
+                    full_vert_ilm[a_idx, :] = v_ilm[i]
+                    full_vert_nfl[a_idx, :] = v_nfl[i]
+                    full_vert_cup[a_idx, :] = v_cup[i]
+
+            # Multi-Planar Fusion: Average horizontal and vertical representations
+            fused_probs = 0.5 * (full_horiz_probs + full_vert_probs)
+            fused_ilm = 0.5 * (full_horiz_ilm + full_vert_ilm.T)
+            fused_nfl = 0.5 * (full_horiz_nfl + full_vert_nfl.T)
+            fused_cup = 0.5 * (full_horiz_cup + full_vert_cup.T)
+        else:
+            fused_probs = full_horiz_probs
+            fused_ilm = full_horiz_ilm
+            fused_nfl = full_horiz_nfl
+            fused_cup = full_horiz_cup
+
+        # ---------------------------------------------------------------------
+        # 3. Dense Segmentation & Hybrid Surface-Guided Recovery
+        # ---------------------------------------------------------------------
+        full_mask = (fused_probs > 0.40).astype(np.uint8)
+
+        # Recover any thin dropouts using the continuous fused 1D surface boundaries
+        for b in range(n_bscans):
+            col_sums = full_mask[b].sum(axis=0)  # (W,)
+            valid_tissue = (fused_cup[b] < 0.5) & ((fused_nfl[b] - fused_ilm[b]) >= 2.0)
+            dropouts = np.where((col_sums == 0) & valid_tissue)[0]
+            for x in dropouts:
+                y0 = int(np.clip(np.round(fused_ilm[b, x]), 0, rows))
+                y1 = int(np.clip(np.round(fused_nfl[b, x]), 0, rows))
+                if y1 > y0:
+                    full_mask[b, y0:y1, x] = 1
 
         # -------------------------------------------------------------------------
         # Optic Disc Size & Anatomical Vertical Cut

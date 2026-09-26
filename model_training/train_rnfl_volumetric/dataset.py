@@ -131,6 +131,7 @@ class SolixRNFLDataset(Dataset):
         protocol="Disc Cube",
         context_slices=5,
         standardize_eye=True,
+        enable_orthogonal=False,
         transform=None
     ):
         self.dataset_root = dataset_root
@@ -139,6 +140,7 @@ class SolixRNFLDataset(Dataset):
         self.context_slices = context_slices
         self.half_ctx = context_slices // 2
         self.standardize_eye = standardize_eye
+        self.enable_orthogonal = enable_orthogonal
         self.transform = transform
 
         tsv_dir = os.path.join(dataset_root, "tsv", arm)
@@ -194,18 +196,30 @@ class SolixRNFLDataset(Dataset):
                 scan_idx = len(self.scans)
                 self.scans.append(scan_info)
 
-                # Add each B-scan slice
+                # 1. Add horizontal B-scan slices
                 for b_idx in range(n_bscans):
-                    # Check if peripapillary slice
                     dist_z = abs(b_idx - zc)
                     is_peripapillary = (dist_z <= 2.0 * r_disc)
                     self.samples.append({
                         'scan_idx': scan_idx,
-                        'bscan_idx': b_idx,
+                        'slice_idx': b_idx,
+                        'plane': 'horizontal',
                         'is_peripapillary': is_peripapillary
                     })
 
-        print(f"[SolixRNFLDataset] Loaded {len(self.scans)} scans, {len(self.samples)} B-scans across {len(self.subjects)} subjects.")
+                # 2. Add orthogonal vertical slices if enabled
+                if self.enable_orthogonal:
+                    for a_idx in range(n_ascans):
+                        dist_x = abs(a_idx - xc)
+                        is_peripapillary = (dist_x <= 2.0 * r_disc)
+                        self.samples.append({
+                            'scan_idx': scan_idx,
+                            'slice_idx': a_idx,
+                            'plane': 'vertical',
+                            'is_peripapillary': is_peripapillary
+                        })
+
+        print(f"[SolixRNFLDataset] Loaded {len(self.scans)} scans, {len(self.samples)} slices (Orthogonal: {self.enable_orthogonal}) across {len(self.subjects)} subjects.")
 
     def __len__(self):
         return len(self.samples)
@@ -213,25 +227,38 @@ class SolixRNFLDataset(Dataset):
     def __getitem__(self, index):
         sample = self.samples[index]
         scan = self.scans[sample['scan_idx']]
-        b_idx = sample['bscan_idx']
-        n_bscans = scan['n_bscans']
+        plane = sample.get('plane', 'horizontal')
+        s_idx = sample.get('slice_idx', sample.get('bscan_idx', 0))
 
-        # 1. Load 2.5D multi-slice stack from zero-overhead memory map
-        slice_indices = [
-            min(max(b_idx + offset, 0), n_bscans - 1)
-            for offset in range(-self.half_ctx, self.half_ctx + 1)
-        ]
-        slices = [scan['memmap'][s_idx] for s_idx in slice_indices]
+        # 1. Load 2.5D multi-slice stack based on plane orientation
+        if plane == 'horizontal':
+            n_slices = scan['n_bscans']
+            slice_indices = [
+                min(max(s_idx + offset, 0), n_slices - 1)
+                for offset in range(-self.half_ctx, self.half_ctx + 1)
+            ]
+            slices = [scan['memmap'][s] for s in slice_indices]
+            ilm_row = scan['curves']['ILM'][s_idx].copy()
+            nfl_row = scan['curves']['NFL'][s_idx].copy()
+        else:
+            # Vertical slice along fast axis (X)
+            n_slices = scan['n_ascans']
+            eff_idx = (n_slices - 1 - s_idx) if (self.standardize_eye and scan['eye'] == 'OS') else s_idx
+            slice_indices = [
+                min(max(eff_idx + offset, 0), n_slices - 1)
+                for offset in range(-self.half_ctx, self.half_ctx + 1)
+            ]
+            # Transpose (320, 768) -> (768, 320)
+            slices = [scan['memmap'][:, :, s].T for s in slice_indices]
+            ilm_row = scan['curves']['ILM'][:, eff_idx].copy()
+            nfl_row = scan['curves']['NFL'][:, eff_idx].copy()
+
         img_stack = np.stack(slices, axis=0).astype(np.float32)  # (C, 768, 320)
 
         # Normalize raw Solix 16-bit uint (0-2560) to [0.0, 1.0]
         img_stack = img_stack / 2560.0
 
-        # 2. Extract Ground Truth Surfaces for central B-scan
-        ilm_row = scan['curves']['ILM'][b_idx].copy()
-        nfl_row = scan['curves']['NFL'][b_idx].copy()
-
-        # 3. Generate Binary RNFL Mask: 1 inside RNFL, 0 outside (vectorized)
+        # 2. Extract Ground Truth Surfaces and Binary RNFL Mask
         rows, cols = img_stack.shape[1], img_stack.shape[2]
         cup_absent = np.isnan(nfl_row).astype(np.float32)
 
@@ -241,8 +268,8 @@ class SolixRNFLDataset(Dataset):
         y1 = np.clip(np.round(np.nan_to_num(nfl_row, nan=-1)), 0, rows)
         mask = ((y_coords >= y0) & (y_coords < y1) & valid).astype(np.float32)
 
-        # 4. Standardize Eye Orientation: Flip OS horizontally so Nasal is consistently on one side
-        if self.standardize_eye and scan['eye'] == 'OS':
+        # 3. Standardize Eye Orientation: For horizontal slices, flip OS horizontally
+        if self.standardize_eye and scan['eye'] == 'OS' and plane == 'horizontal':
             img_stack = np.flip(img_stack, axis=-1).copy()
             mask = np.flip(mask, axis=-1).copy()
             ilm_row = np.flip(ilm_row).copy()
