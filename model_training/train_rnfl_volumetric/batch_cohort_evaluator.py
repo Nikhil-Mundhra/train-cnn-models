@@ -389,9 +389,9 @@ class VolumetricRNFLPredictor:
 
         return VolumePrediction(
             mask=full_mask,
-            ilm_curve=full_ilm,
-            nfl_curve=full_nfl,
-            cup_probs=full_cup
+            ilm_curve=fused_ilm,
+            nfl_curve=fused_nfl,
+            cup_probs=fused_cup
         )
 
 
