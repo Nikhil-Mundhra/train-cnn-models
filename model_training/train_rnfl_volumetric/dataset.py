@@ -295,6 +295,7 @@ class SolixRNFLDataset(Dataset):
             'cup_absent': cup_absent_tensor,
             'subject': scan['subject'],
             'eye': scan['eye'],
-            'bscan_idx': b_idx,
+            'bscan_idx': s_idx,
+            'plane': plane,
             'is_peripapillary': sample['is_peripapillary']
         }
