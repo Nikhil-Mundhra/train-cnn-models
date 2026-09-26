@@ -819,11 +819,15 @@ class CohortEvaluatorPipeline:
         dataset_root: str,
         output_dir: str,
         val_subjects: List[str],
-        device: str = "mps"
+        device: str = "mps",
+        batch_size: int = 8,
+        biplanar_fusion: bool = True
     ):
         self.dataset_root = dataset_root
         self.output_dir = output_dir
         self.val_subjects = val_subjects
+        self.batch_size = batch_size
+        self.biplanar_fusion = biplanar_fusion
 
         dev_str = device if ("mps" in device and torch.backends.mps.is_available()) or "cuda" in device else "cpu"
         self.device = torch.device(dev_str)
@@ -831,8 +835,8 @@ class CohortEvaluatorPipeline:
         self.assets_dir = os.path.join(self.output_dir, "assets", "executive_cohort_report")
         os.makedirs(self.assets_dir, exist_ok=True)
 
-        print(f"[Cohort Pipeline] Initializing VolumetricRNFLPredictor on {self.device}...")
-        self.predictor = VolumetricRNFLPredictor.from_checkpoint(checkpoint_path, self.device)
+        print(f"[Cohort Pipeline] Initializing VolumetricRNFLPredictor on {self.device} (batch_size={self.batch_size}, biplanar_fusion={self.biplanar_fusion})...")
+        self.predictor = VolumetricRNFLPredictor.from_checkpoint(checkpoint_path, self.device, batch_size=self.batch_size)
         self.metrics_calc = ClinicalMetricsCalculator(axial_res_um=AXIAL_RES_UM)
         self.visualizer = CohortVisualizer(output_dir=self.assets_dir)
 
@@ -914,7 +918,7 @@ class CohortEvaluatorPipeline:
             print(f"\n---> Evaluating {vol.subject} ({vol.eye}) [{vol.cohort_tag}]...")
 
             # 1. Inference
-            prediction = self.predictor.predict(vol)
+            prediction = self.predictor.predict(vol, biplanar_fusion=self.biplanar_fusion)
 
             # 2. Metric Computation
             result = self.metrics_calc.evaluate_scan(vol, prediction)
@@ -973,6 +977,9 @@ def main():
     parser.add_argument("--dataset_root", type=str, default="/Users/nikhilmundhra/Library/CloudStorage/Box-Box/deidentified")
     parser.add_argument("--output_dir", type=str, default="/Users/nikhilmundhra/Documents/Github/Capstone/OCT-Analyser-Capstone/docs")
     parser.add_argument("--val_subjects", type=str, default="BEH0335,BEH0314")
+    parser.add_argument("--batch_size", type=int, default=8, help="Batch size for volumetric inference")
+    parser.add_argument("--disable_biplanar", dest="biplanar_fusion", action="store_false", help="Disable biplanar fusion")
+    parser.set_defaults(biplanar_fusion=True)
     parser.add_argument("--device", type=str, default="mps")
     args = parser.parse_args()
 
@@ -983,7 +990,9 @@ def main():
         dataset_root=args.dataset_root,
         output_dir=args.output_dir,
         val_subjects=val_subjects,
-        device=args.device
+        device=args.device,
+        batch_size=args.batch_size,
+        biplanar_fusion=args.biplanar_fusion
     )
     pipeline.run()
 
