@@ -22,7 +22,13 @@ if str(MODULE_DIR) not in sys.path:
 
 from dataset import find_matching_curve_xml, find_subject_dicom_and_curves
 from export_to_slicer import run_volumetric_inference, export_prediction
-from batch_cohort_evaluator import VolumetricRNFLPredictor, OCTVolume, InferenceConfig
+from batch_cohort_evaluator import (
+    VolumetricRNFLPredictor,
+    OCTVolume,
+    InferenceConfig,
+    VolumePrediction,
+    DiscGeometry,
+)
 from model import VolumetricRNFLNet
 
 
@@ -183,26 +189,33 @@ class TestExportToSlicer(unittest.TestCase):
             'model_state_dict': dummy_model.state_dict(),
         }, checkpoint_path)
 
-        # Create a synthetic pseudo-DICOM file with pixel tag
+        # Create a synthetic pseudo-DICOM file with pixel tag and full volume size
         dcm_path = os.path.join(self.output_dir, "TEST_Disc Cube_OD.dcm")
-        # 5 B-scans, 768 rows, 320 cols uint16
-        n_slices, rows, cols = 5, 768, 320
-        raw_pixels = np.zeros((n_slices, rows, cols), dtype=np.uint16)
         with open(dcm_path, "wb") as f:
             f.write(b"PREAMBLE" * 16)
             f.write(b"\xe0\x7f\x10\x00")  # PixelData tag
             f.write(b"OB\x00\x00")
-            f.write(raw_pixels.tobytes())
+            # Create sparse file with exact length required for 320x768x320 uint16 volume
+            f.seek(128 + 8 + 320 * 768 * 320 * 2 - 1)
+            f.write(b"\x00")
 
         # Test export_prediction with launch_slicer=True
-        out_npz = export_prediction(
-            checkpoint_path=checkpoint_path,
-            dcm_path=dcm_path,
-            output_dir=self.output_dir,
-            device="cpu",
-            launch_slicer=True,
-            biplanar_fusion=False,  # Single horizontal pass for fast test
+        from unittest.mock import patch
+        mock_pred = VolumePrediction(
+            mask=np.zeros((320, 768, 320), dtype=np.uint8),
+            ilm_curve=np.zeros((320, 320), dtype=np.float32),
+            nfl_curve=np.zeros((320, 320), dtype=np.float32),
+            cup_probs=np.zeros((320, 320), dtype=np.float32),
         )
+        with patch.object(VolumetricRNFLPredictor, "predict", return_value=mock_pred):
+            out_npz = export_prediction(
+                checkpoint_path=checkpoint_path,
+                dcm_path=dcm_path,
+                output_dir=self.output_dir,
+                device="cpu",
+                launch_slicer=True,
+                biplanar_fusion=False,
+            )
 
         self.assertTrue(os.path.exists(out_npz))
         loaded = np.load(out_npz)

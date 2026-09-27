@@ -99,8 +99,23 @@ train-cnn-models/model_training/train_rnfl_volumetric/
 ├── losses.py              <- VolumetricRNFLLoss: Dice, boundary Huber, cup BCE, topo penalty
 ├── train.py               <- Subject-grouped training loop with validation & checkpointing
 ├── export_to_slicer.py    <- Full-volume inference and interactive 3D Slicer exporter
+├── batch_cohort_evaluator.py <- Subject-disjoint cohort evaluation and report assets
+├── build_cohort_report.py <- Executive cohort report CLI orchestrator
+├── reporting/             <- Modular visualization and report generation suite
+│   ├── theme.py           <- Dual-theme color palettes (light for PDF, dark for markdown)
+│   ├── charts.py          <- High-res publication chart generators
+│   ├── markdown.py        <- List normalization and markdown report templating
+│   └── compiler.py        <- Headless browser discovery and HTML/PDF compiler
+├── run_orientation_ablation.py <- Controlled OS orientation/fusion experiment
+├── orientation.py         <- Shared OD/OS coordinate transforms
+├── quality_control.py     <- Operational failure detection and review routing
+├── evaluation_manifest.py <- JSON/CSV subject split validation
+├── EVALUATION_AND_QC.md   <- Evaluation, QC, and comparator protocol
 └── tests/
-    └── test_pipeline.py   <- Unit tests for dataset, model, loss, and disc geometry
+    ├── test_pipeline.py   <- Unit tests for dataset, model, loss, and disc geometry
+    ├── test_orientation_qc.py <- Orientation, manifest, and QC regression tests
+    ├── test_dataset_and_export.py <- Curve matching, multi-arm discovery, and Slicer export tests
+    └── test_reporting.py  <- Unit tests for charts, markdown normalization, and PDF compiler
 ```
 
 ---
@@ -153,6 +168,14 @@ To segment an entire 320-slice DICOM volume and visualize the 3D surface model i
 This generates:
 1. `*_rnfl_pred.npz`: Compressed 3D binary labelmap `(320 x 768 x 320)`.
 2. `view_prediction_in_slicer.py`: Script that launches 3D Slicer, loads the master OCT volume, imports the predicted RNFL layer, and generates the closed 3D surface mesh.
+
+### Cohort evaluation and quality control
+
+Use `batch_cohort_evaluator.py` for corrected biplanar cohort inference. It
+supports a frozen subject-split manifest, targeted subject filters, explicit OS
+orientation modes, automatic failure flags, and commercial-annotation
+availability auditing. See [EVALUATION_AND_QC.md](EVALUATION_AND_QC.md) for the
+commands and interpretation rules.
 
 ---
 
@@ -221,6 +244,5 @@ Once training completes, download the best model weights back to your local mach
 mkdir -p ./checkpoints/jubail_run
 rsync -avhP nm4358@jubail.abudhabi.nyu.edu:/scratch/nm4358/checkpoints/rnfl_volumetric_*/best_volumetric_rnfl_net.pt ./checkpoints/jubail_run/
 ```
-
 
 
