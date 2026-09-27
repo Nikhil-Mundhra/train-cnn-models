@@ -12,8 +12,9 @@ import glob
 import json
 import re
 import argparse
+import csv
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 
@@ -28,8 +29,16 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from dataset import find_dicom_pixel_offset, load_curves
+from dataset import find_dicom_pixel_offset, load_curves, find_matching_curve_xml
 from model import VolumetricRNFLNet
+from orientation import (
+    OS_ORIENTATION_MODES,
+    horizontal_requires_flip,
+    validate_orientation_mode,
+    vertical_source_and_destination,
+)
+from quality_control import assess_prediction
+from evaluation_manifest import is_evaluation_split, load_split_manifest
 
 AXIAL_RES_UM: float = 3.09
 
@@ -71,6 +80,9 @@ class ScanEvaluationResult:
     bad_mabe: Optional[float] = None
     bad_p95: Optional[float] = None
     bad_cup_iou: Optional[float] = None
+    qc_status: str = "not_assessed"
+    qc_flags: List[str] = field(default_factory=list)
+    qc_metrics: Dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -83,6 +95,7 @@ class VolumePrediction:
     ilm_curve: np.ndarray   # (320, 320) float32
     nfl_curve: np.ndarray   # (320, 320) float32
     cup_probs: np.ndarray   # (320, 320) float32
+    diagnostics: Dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -130,6 +143,7 @@ class OCTVolume:
         good_xml_path: Optional[str],
         bad_xml_path: Optional[str] = None,
         is_validation: bool = False,
+        cohort_tag: Optional[str] = None,
         n_bscans: int = 320,
         rows: int = 768,
         cols: int = 320
@@ -140,7 +154,7 @@ class OCTVolume:
         self.good_xml_path = good_xml_path
         self.bad_xml_path = bad_xml_path
         self.is_validation = is_validation
-        self.cohort_tag = "Validation (Held-Out)" if is_validation else "Training / Benchmark"
+        self.cohort_tag = cohort_tag or ("Validation (Held-Out)" if is_validation else "Training / Benchmark")
 
         self.n_bscans = n_bscans
         self.rows = rows
@@ -165,10 +179,10 @@ class OCTVolume:
         return self._memmap
 
     @property
-    def curves_good(self) -> Dict[str, np.ndarray]:
+    def curves_good(self) -> Optional[Dict[str, np.ndarray]]:
         if self._curves_good is None:
             if not self.good_xml_path or not os.path.exists(self.good_xml_path):
-                raise FileNotFoundError(f"Good curves XML not found for {self.subject} ({self.eye})")
+                return None
             self._curves_good = load_curves(self.good_xml_path, mask_sentinel=True)
         return self._curves_good
 
@@ -181,19 +195,23 @@ class OCTVolume:
     @property
     def disc_geometry(self) -> DiscGeometry:
         if self._disc_geom is None:
-            ilm = self.curves_good.get('ILM')
-            nfl = self.curves_good.get('NFL')
-            if ilm is None or nfl is None:
-                self._disc_geom = DiscGeometry(zc=160, xc=160, r_disc=45)
+            curves = self.curves_good
+            if curves is None:
+                self._disc_geom = DiscGeometry(zc=self.n_bscans // 2, xc=self.cols // 2, r_disc=45)
             else:
-                cup_mask = np.isnan(nfl)
-                cup_counts = np.sum(cup_mask, axis=1)
-                zc = int(np.argmax(cup_counts)) if np.max(cup_counts) > 0 else 160
-                cup_cols = np.where(cup_mask[zc])[0]
-                xc = int(np.median(cup_cols)) if len(cup_cols) > 0 else 160
-                active_slices = np.where(cup_counts > 5)[0]
-                r_disc = int(max(len(active_slices) // 2, 25))
-                self._disc_geom = DiscGeometry(zc=zc, xc=xc, r_disc=r_disc)
+                ilm = curves.get('ILM')
+                nfl = curves.get('NFL')
+                if ilm is None or nfl is None:
+                    self._disc_geom = DiscGeometry(zc=self.n_bscans // 2, xc=self.cols // 2, r_disc=45)
+                else:
+                    cup_mask = np.isnan(nfl)
+                    cup_counts = np.sum(cup_mask, axis=1)
+                    zc = int(np.argmax(cup_counts)) if np.max(cup_counts) > 0 else self.n_bscans // 2
+                    cup_cols = np.where(cup_mask[zc])[0]
+                    xc = int(np.median(cup_cols)) if len(cup_cols) > 0 else self.cols // 2
+                    active_slices = np.where(cup_counts > 5)[0]
+                    r_disc = int(max(len(active_slices) // 2, 25))
+                    self._disc_geom = DiscGeometry(zc=zc, xc=xc, r_disc=r_disc)
         return self._disc_geom
 
     def rasterize_curve_slice(self, curve_set: str, b_idx: int) -> np.ndarray:
@@ -232,6 +250,7 @@ class VolumetricRNFLPredictor:
         half_ctx: int = 2,
         config: InferenceConfig = InferenceConfig(),
         disc_cut_config: OpticDiscCutConfig = OpticDiscCutConfig(),
+        os_orientation_mode: str = "corrected",
     ):
         self.model = model
         self.device = device
@@ -239,13 +258,20 @@ class VolumetricRNFLPredictor:
         self.half_ctx = half_ctx
         self.config = config
         self.disc_cut_config = disc_cut_config
+        self.os_orientation_mode = validate_orientation_mode(os_orientation_mode)
         self.model.eval()
 
         self.use_amp = "mps" in str(device) or "cuda" in str(device)
         self.autocast_device = "mps" if "mps" in str(device) else ("cuda" if "cuda" in str(device) else "cpu")
 
     @classmethod
-    def from_checkpoint(cls, checkpoint_path: str, device: torch.device, batch_size: int = 8) -> "VolumetricRNFLPredictor":
+    def from_checkpoint(
+        cls,
+        checkpoint_path: str,
+        device: torch.device,
+        batch_size: int = 8,
+        os_orientation_mode: str = "corrected",
+    ) -> "VolumetricRNFLPredictor":
         ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
         ckpt_args = ckpt.get('args', {})
         base_channels = ckpt_args.get('base_channels')
@@ -274,7 +300,12 @@ class VolumetricRNFLPredictor:
         ).to(device)
         model.load_state_dict(state_dict)
         model.eval()
-        return cls(model=model, device=device, batch_size=batch_size)
+        return cls(
+            model=model,
+            device=device,
+            batch_size=batch_size,
+            os_orientation_mode=os_orientation_mode,
+        )
 
     def _forward_batch(self, batch_tensor: torch.Tensor) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Executes a single forward pass under autocast and converts outputs to numpy arrays."""
@@ -292,7 +323,7 @@ class VolumetricRNFLPredictor:
         oct_volume: OCTVolume
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Performs 2.5D context inference across horizontal B-scans (Z-axis slices)."""
-        is_os = (oct_volume.eye == "OS")
+        flip_os = horizontal_requires_flip(oct_volume.eye, self.os_orientation_mode)
         memmap = oct_volume.memmap
         n_bscans = oct_volume.n_bscans
         rows = oct_volume.rows
@@ -310,14 +341,14 @@ class VolumetricRNFLPredictor:
                 slice_indices = [min(max(b_idx + o, 0), n_bscans - 1) for o in range(-self.half_ctx, self.half_ctx + 1)]
                 stack = [memmap[s] for s in slice_indices]
                 img_stack = np.stack(stack, axis=0).astype(np.float32) / self.config.norm_divisor
-                if is_os:
+                if flip_os:
                     img_stack = np.flip(img_stack, axis=-1).copy()
                 batch_slices.append(img_stack)
 
             batch_tensor = torch.from_numpy(np.stack(batch_slices, axis=0)).to(self.device)
             probs, ilm_preds, nfl_preds, cup_probs = self._forward_batch(batch_tensor)
 
-            if is_os:
+            if flip_os:
                 probs = np.flip(probs, axis=-1).copy()
                 ilm_preds = np.flip(ilm_preds, axis=-1).copy()
                 nfl_preds = np.flip(nfl_preds, axis=-1).copy()
@@ -335,7 +366,6 @@ class VolumetricRNFLPredictor:
         oct_volume: OCTVolume
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Performs 2.5D context inference across orthogonal vertical planes (X-axis slices)."""
-        is_os = (oct_volume.eye == "OS")
         memmap = oct_volume.memmap
         n_bscans = oct_volume.n_bscans
         rows = oct_volume.rows
@@ -349,23 +379,27 @@ class VolumetricRNFLPredictor:
         for start_a in range(0, cols, self.batch_size):
             end_a = min(start_a + self.batch_size, cols)
             batch_slices = []
+            destinations = []
             for a_idx in range(start_a, end_a):
-                eff_a = (cols - 1 - a_idx) if is_os else a_idx
+                eff_a, dest_a = vertical_source_and_destination(
+                    a_idx, cols, oct_volume.eye, self.os_orientation_mode
+                )
                 slice_indices = [min(max(eff_a + o, 0), cols - 1) for o in range(-self.half_ctx, self.half_ctx + 1)]
                 # Transpose (320, 768) -> (768, 320)
                 stack = [memmap[:, :, s].T for s in slice_indices]
                 img_stack = np.stack(stack, axis=0).astype(np.float32) / self.config.norm_divisor
                 batch_slices.append(img_stack)
+                destinations.append(dest_a)
 
             batch_tensor = torch.from_numpy(np.stack(batch_slices, axis=0)).to(self.device)
             v_probs, v_ilm, v_nfl, v_cup = self._forward_batch(batch_tensor)
 
-            for i, a_idx in enumerate(range(start_a, end_a)):
+            for i, dest_a in enumerate(destinations):
                 # Transpose (768, 320) -> (320, 768) to map (Z, Y) back to (Y, Z)
-                full_probs[:, :, a_idx] = v_probs[i].T
-                full_ilm[a_idx, :] = v_ilm[i]
-                full_nfl[a_idx, :] = v_nfl[i]
-                full_cup[a_idx, :] = v_cup[i]
+                full_probs[:, :, dest_a] = v_probs[i].T
+                full_ilm[dest_a, :] = v_ilm[i]
+                full_nfl[dest_a, :] = v_nfl[i]
+                full_cup[dest_a, :] = v_cup[i]
 
         return full_probs, full_ilm, full_nfl, full_cup
 
@@ -438,9 +472,17 @@ class VolumetricRNFLPredictor:
         Fuses predictions to eliminate directional blind spots and peripheral cutoffs.
         """
         horiz_preds = self._infer_horizontal_pane(oct_volume)
+        diagnostics: Dict[str, float] = {}
 
         if biplanar_fusion:
             vert_preds = self._infer_vertical_pane(oct_volume)
+            h_probs, h_ilm, h_nfl, _ = horiz_preds
+            v_probs, v_ilm, v_nfl, _ = vert_preds
+            diagnostics = {
+                "biplanar_probability_disagreement": float(np.mean(np.abs(h_probs - v_probs))),
+                "biplanar_ilm_disagreement_um": float(np.median(np.abs(h_ilm - v_ilm.T)) * AXIAL_RES_UM),
+                "biplanar_nfl_disagreement_um": float(np.median(np.abs(h_nfl - v_nfl.T)) * AXIAL_RES_UM),
+            }
             fused_probs, fused_ilm, fused_nfl, fused_cup = self._fuse_predictions(horiz_preds, vert_preds)
         else:
             fused_probs, fused_ilm, fused_nfl, fused_cup = horiz_preds
@@ -463,7 +505,8 @@ class VolumetricRNFLPredictor:
             mask=full_mask,
             ilm_curve=fused_ilm,
             nfl_curve=fused_nfl,
-            cup_probs=fused_cup
+            cup_probs=fused_cup,
+            diagnostics=diagnostics,
         )
 
 
@@ -612,7 +655,7 @@ class CohortVisualizer:
         mask_cyan = oct_volume.rasterize_curve_slice("good", zc)
         mask_green = prediction.mask[zc]
 
-        fig, axs = plt.subplots(1, 2, figsize=(16, 5), facecolor="black")
+        fig, axs = plt.subplots(1, 2, figsize=(16, 5), facecolor="black", constrained_layout=True)
         for col_idx, (title, mask, color) in enumerate([
             ("Reference Algorithm (Cyan)", mask_cyan, [0.0, 0.8, 1.0]),
             ("Volumetric U-Net (Green)", mask_green, [0.1, 0.95, 0.3])
@@ -621,7 +664,7 @@ class CohortVisualizer:
             ax.imshow(raw_bscan, cmap="gray", aspect="auto")
 
             overlay = np.zeros((*raw_bscan.shape, 4), dtype=np.float32)
-            overlay[mask == 1] = [*color, 0.40]
+            overlay[mask == 1] = [*color, 0.16]
             ax.imshow(overlay, aspect="auto")
 
             contours = scipy.ndimage.binary_dilation(mask) ^ mask
@@ -635,8 +678,7 @@ class CohortVisualizer:
 
         filename = f"gallery_bscan_{oct_volume.subject}_{oct_volume.eye}.png"
         out_path = os.path.join(self.output_dir, filename)
-        plt.tight_layout()
-        plt.savefig(out_path, dpi=160, bbox_inches="tight", facecolor="black")
+        plt.savefig(out_path, dpi=160, bbox_inches="tight", pad_inches=0.16, facecolor="black")
         plt.close(fig)
         return filename
 
@@ -659,7 +701,7 @@ class CohortVisualizer:
             m_b = oct_volume.rasterize_curve_slice("good", b_i)
             enface_cyan[b_i] = m_b[y_enface, :]
 
-        fig, axs = plt.subplots(2, 3, figsize=(20, 12), facecolor="black")
+        fig, axs = plt.subplots(2, 3, figsize=(20, 12), facecolor="black", constrained_layout=True)
         arms = [
             ("Reference Algorithm (Cyan)", mask_cyan, [0.0, 0.8, 1.0]),
             ("Commercial Solix (Red)", mask_red, [1.0, 0.2, 0.2]),
@@ -672,7 +714,7 @@ class CohortVisualizer:
             ax.imshow(raw_bscan, cmap="gray", aspect="auto")
             if mask is not None:
                 overlay = np.zeros((*raw_bscan.shape, 4), dtype=np.float32)
-                overlay[mask == 1] = [*color, 0.40]
+                overlay[mask == 1] = [*color, 0.16]
                 ax.imshow(overlay, aspect="auto")
 
                 contours = scipy.ndimage.binary_dilation(mask) ^ mask
@@ -682,14 +724,17 @@ class CohortVisualizer:
 
             ax.set_title(f"{title}\nCentral B-scan {zc}", color="white", fontsize=11, fontweight="bold")
             ax.set_ylim(440, 180)
+            if col_idx == 0:
+                ax.add_patch(matplotlib.patches.Rectangle((60, 220), 80, 150, fill=False, edgecolor="#f8fafc", linewidth=1.4, linestyle="--"))
+                ax.add_patch(matplotlib.patches.Rectangle((180, 220), 80, 150, fill=False, edgecolor="#f8fafc", linewidth=1.4, linestyle="--"))
             ax.axis("off")
 
         # Row 1, Col 0: Nasal Rim Zoom
         ax_left = axs[1, 0]
         ax_left.imshow(raw_bscan, cmap="gray", aspect="auto")
         over_l = np.zeros((*raw_bscan.shape, 4), dtype=np.float32)
-        over_l[mask_cyan == 1] = [0.0, 0.8, 1.0, 0.3]
-        over_l[mask_green == 1] = [0.1, 0.95, 0.3, 0.5]
+        over_l[mask_cyan == 1] = [0.0, 0.8, 1.0, 0.16]
+        over_l[mask_green == 1] = [0.1, 0.95, 0.3, 0.20]
         ax_left.imshow(over_l, aspect="auto")
         ax_left.set_xlim(60, 140)
         ax_left.set_ylim(370, 220)
@@ -700,8 +745,8 @@ class CohortVisualizer:
         ax_right = axs[1, 1]
         ax_right.imshow(raw_bscan, cmap="gray", aspect="auto")
         over_r = np.zeros((*raw_bscan.shape, 4), dtype=np.float32)
-        over_r[mask_cyan == 1] = [0.0, 0.8, 1.0, 0.3]
-        over_r[mask_green == 1] = [0.1, 0.95, 0.3, 0.5]
+        over_r[mask_cyan == 1] = [0.0, 0.8, 1.0, 0.16]
+        over_r[mask_green == 1] = [0.1, 0.95, 0.3, 0.20]
         ax_right.imshow(over_r, aspect="auto")
         ax_right.set_xlim(180, 260)
         ax_right.set_ylim(370, 220)
@@ -712,16 +757,15 @@ class CohortVisualizer:
         ax_ef = axs[1, 2]
         ax_ef.imshow(enface_raw, cmap="gray", aspect="auto")
         over_ef = np.zeros((*enface_raw.shape, 4), dtype=np.float32)
-        over_ef[enface_cyan == 1] = [0.0, 0.8, 1.0, 0.35]
-        over_ef[enface_green == 1] = [0.1, 0.95, 0.3, 0.5]
+        over_ef[enface_cyan == 1] = [0.0, 0.8, 1.0, 0.16]
+        over_ef[enface_green == 1] = [0.1, 0.95, 0.3, 0.20]
         ax_ef.imshow(over_ef, aspect="auto")
         ax_ef.set_title(f"En Face Mid-Rim Plane (y={y_enface})\n[Cyan: Ref vs Green: U-Net]", color="white", fontsize=11, fontweight="bold")
         ax_ef.axis("off")
 
         filename = f"deep_dive_{oct_volume.subject}_{oct_volume.eye}.png"
         out_path = os.path.join(self.output_dir, filename)
-        plt.tight_layout()
-        plt.savefig(out_path, dpi=160, bbox_inches="tight", facecolor="black")
+        plt.savefig(out_path, dpi=160, bbox_inches="tight", pad_inches=0.18, facecolor="black")
         plt.close(fig)
         return filename
 
@@ -772,13 +816,21 @@ class CohortEvaluatorPipeline:
         val_subjects: List[str],
         device: str = "mps",
         batch_size: int = 8,
-        biplanar_fusion: bool = True
+        biplanar_fusion: bool = True,
+        os_orientation_mode: str = "corrected",
+        split_manifest: Optional[str] = None,
+        subject_filter: Optional[List[str]] = None,
+        eye_filter: Optional[List[str]] = None,
     ):
         self.dataset_root = dataset_root
         self.output_dir = output_dir
         self.val_subjects = val_subjects
         self.batch_size = batch_size
         self.biplanar_fusion = biplanar_fusion
+        self.os_orientation_mode = validate_orientation_mode(os_orientation_mode)
+        self.split_map = load_split_manifest(split_manifest) if split_manifest else {}
+        self.subject_filter = set(subject_filter or [])
+        self.eye_filter = {eye.upper() for eye in (eye_filter or [])}
 
         dev_str = device if ("mps" in device and torch.backends.mps.is_available()) or "cuda" in device else "cpu"
         self.device = torch.device(dev_str)
@@ -786,8 +838,17 @@ class CohortEvaluatorPipeline:
         self.assets_dir = os.path.join(self.output_dir, "assets", "executive_cohort_report")
         os.makedirs(self.assets_dir, exist_ok=True)
 
-        print(f"[Cohort Pipeline] Initializing VolumetricRNFLPredictor on {self.device} (batch_size={self.batch_size}, biplanar_fusion={self.biplanar_fusion})...")
-        self.predictor = VolumetricRNFLPredictor.from_checkpoint(checkpoint_path, self.device, batch_size=self.batch_size)
+        print(
+            f"[Cohort Pipeline] Initializing VolumetricRNFLPredictor on {self.device} "
+            f"(batch_size={self.batch_size}, biplanar_fusion={self.biplanar_fusion}, "
+            f"os_orientation_mode={self.os_orientation_mode})..."
+        )
+        self.predictor = VolumetricRNFLPredictor.from_checkpoint(
+            checkpoint_path,
+            self.device,
+            batch_size=self.batch_size,
+            os_orientation_mode=self.os_orientation_mode,
+        )
         self.metrics_calc = ClinicalMetricsCalculator(axial_res_um=AXIAL_RES_UM)
         self.visualizer = CohortVisualizer(output_dir=self.assets_dir)
 
@@ -801,11 +862,19 @@ class CohortEvaluatorPipeline:
         volumes: List[OCTVolume] = []
 
         for subj in all_subjs:
-            is_val = subj in self.val_subjects
+            if self.subject_filter and subj not in self.subject_filter:
+                continue
+            if self.split_map and subj not in self.split_map:
+                continue
+            split = self.split_map.get(subj)
+            is_val = is_evaluation_split(split) if split is not None else subj in self.val_subjects
+            cohort_tag = split.replace("_", " ").title() if split is not None else None
             subj_dcms = sorted(glob.glob(os.path.join(dicom_dir, subj, "*Disc Cube*_OPT.dcm")))
             for dcm_path in subj_dcms:
                 fname = os.path.basename(dcm_path)
                 eye = "OS" if "_OS_" in fname else "OD"
+                if self.eye_filter and eye not in self.eye_filter:
+                    continue
 
                 good_xml = self._find_matching_curve_xml(tsv_good_dir, subj, eye, fname)
                 if not good_xml:
@@ -818,7 +887,8 @@ class CohortEvaluatorPipeline:
                     dcm_path=dcm_path,
                     good_xml_path=good_xml,
                     bad_xml_path=bad_xml,
-                    is_validation=is_val
+                    is_validation=is_val,
+                    cohort_tag=cohort_tag,
                 )
                 volumes.append(vol)
 
@@ -826,36 +896,7 @@ class CohortEvaluatorPipeline:
 
     @staticmethod
     def _find_matching_curve_xml(tsv_dir: str, subj: str, eye: str, dcm_fname: str, protocol: str = "Disc Cube") -> Optional[str]:
-        subj_tsv = os.path.join(tsv_dir, subj)
-        if not os.path.exists(subj_tsv):
-            return None
-
-        # 1. Timestamp matching via master XML
-        m = re.search(r"(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})", dcm_fname)
-        if m:
-            target_time = f"{m.group(1)} {m.group(2)}:{m.group(3)}:{m.group(4)}"
-            master_xmls = glob.glob(os.path.join(subj_tsv, "*.xml"))
-            for m_xml in master_xmls:
-                try:
-                    tree = ET.parse(m_xml)
-                    for scan in tree.getroot().iter("Scan"):
-                        stype = scan.findtext("ScanType", "").strip()
-                        stime = scan.findtext("ScanTime", "").strip()
-                        seye = scan.findtext("Eye", "").strip()
-                        cfile = scan.findtext("Curve/File", "").strip()
-                        if protocol.lower() in stype.lower() and seye == eye and stime == target_time and cfile:
-                            rel_path = cfile.replace("\\", "/").lstrip("./")
-                            full_path = os.path.join(subj_tsv, rel_path)
-                            if os.path.exists(full_path):
-                                return full_path
-                except Exception:
-                    pass
-
-        # 2. Fallback glob
-        xmls = glob.glob(os.path.join(subj_tsv, "curve", f"*{eye}*{protocol}*.xml"))
-        if not xmls:
-            xmls = glob.glob(os.path.join(subj_tsv, "curve", f"*{protocol}*{eye}*.xml"))
-        return xmls[0] if xmls else None
+        return find_matching_curve_xml(tsv_dir, subj, eye, dcm_fname, protocol=protocol)
 
     def _evaluate_single_volume(
         self,
@@ -870,8 +911,13 @@ class CohortEvaluatorPipeline:
 
         # 2. Metric Computation
         result = self.metrics_calc.evaluate_scan(vol, prediction)
+        quality = assess_prediction(prediction, evaluation=result)
+        result.qc_status = quality.status
+        result.qc_flags = quality.flags
+        result.qc_metrics = quality.metrics
 
         print(f"[{vol.subject} {vol.eye}] U-Net Dice: {result.unet_dice:.4f} | MABE: {result.unet_mabe:.2f} µm | P95: {result.unet_p95:.2f} µm | Cup IoU: {result.unet_cup_iou:.4f}")
+        print(f"[{vol.subject} {vol.eye}] QC: {result.qc_status} | Flags: {', '.join(result.qc_flags) if result.qc_flags else 'none'}")
         if result.bad_dice is not None:
             print(f"[{vol.subject} {vol.eye}] Bad   Dice: {result.bad_dice:.4f} | MABE: {result.bad_mabe:.2f} µm | P95: {result.bad_p95:.2f} µm | Cup IoU: {result.bad_cup_iou:.4f}")
 
@@ -923,6 +969,69 @@ class CohortEvaluatorPipeline:
                 'deep_dives': deep_dive_manifest
             }, f, indent=2)
         print(f"[Cohort Pipeline] Metrics JSON saved to: {json_path}")
+
+        paired_csv = os.path.join(self.assets_dir, "commercial_pairing_audit.csv")
+        with open(paired_csv, "w", newline="") as f:
+            fields = [
+                "subject", "eye", "cohort", "pairing_status", "unet_dice", "commercial_dice", "dice_delta",
+                "unet_mabe_um", "commercial_mabe_um", "mabe_delta_um", "unet_cup_iou", "commercial_cup_iou", "cup_iou_delta",
+            ]
+            writer = csv.DictWriter(f, fieldnames=fields)
+            writer.writeheader()
+            for result in cohort_results:
+                if result.is_mirror:
+                    status = "excluded_unedited_mirror"
+                elif result.bad_dice is None:
+                    status = "missing_commercial_annotation"
+                else:
+                    status = "paired"
+                writer.writerow({
+                    "subject": result.subject,
+                    "eye": result.eye,
+                    "cohort": result.cohort,
+                    "pairing_status": status,
+                    "unet_dice": f"{result.unet_dice:.6f}",
+                    "commercial_dice": "" if result.bad_dice is None else f"{result.bad_dice:.6f}",
+                    "dice_delta": "" if result.bad_dice is None else f"{result.unet_dice - result.bad_dice:.6f}",
+                    "unet_mabe_um": f"{result.unet_mabe:.6f}",
+                    "commercial_mabe_um": "" if result.bad_mabe is None or not np.isfinite(result.bad_mabe) else f"{result.bad_mabe:.6f}",
+                    "mabe_delta_um": "" if result.bad_mabe is None or not np.isfinite(result.bad_mabe) else f"{result.unet_mabe - result.bad_mabe:.6f}",
+                    "unet_cup_iou": f"{result.unet_cup_iou:.6f}",
+                    "commercial_cup_iou": "" if result.bad_cup_iou is None else f"{result.bad_cup_iou:.6f}",
+                    "cup_iou_delta": "" if result.bad_cup_iou is None else f"{result.unet_cup_iou - result.bad_cup_iou:.6f}",
+                })
+        print(f"[Cohort Pipeline] Commercial pairing audit saved to: {paired_csv}")
+
+        review_rows = [r for r in cohort_results if r.qc_status == "manual_review"]
+        review_json = os.path.join(self.assets_dir, "manual_review_queue.json")
+        with open(review_json, "w") as f:
+            json.dump({
+                "notice": "Operational engineering flags; thresholds are not clinically validated.",
+                "orientation_mode": self.os_orientation_mode,
+                "total_scans": len(cohort_results),
+                "review_count": len(review_rows),
+                "scans": [r.to_dict() for r in review_rows],
+            }, f, indent=2)
+
+        review_csv = os.path.join(self.assets_dir, "manual_review_queue.csv")
+        with open(review_csv, "w", newline="") as f:
+            writer = csv.DictWriter(
+                f,
+                fieldnames=["subject", "eye", "cohort", "qc_status", "qc_flags", "dice", "mabe_um", "cup_iou"],
+            )
+            writer.writeheader()
+            for result in review_rows:
+                writer.writerow({
+                    "subject": result.subject,
+                    "eye": result.eye,
+                    "cohort": result.cohort,
+                    "qc_status": result.qc_status,
+                    "qc_flags": ";".join(result.qc_flags),
+                    "dice": f"{result.unet_dice:.6f}",
+                    "mabe_um": f"{result.unet_mabe:.6f}",
+                    "cup_iou": f"{result.unet_cup_iou:.6f}",
+                })
+        print(f"[Cohort Pipeline] Manual-review queue: {len(review_rows)}/{len(cohort_results)} scans -> {review_json}")
         return json_path
 
     def run(self) -> List[ScanEvaluationResult]:
@@ -960,10 +1069,21 @@ def main():
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for volumetric inference")
     parser.add_argument("--disable_biplanar", dest="biplanar_fusion", action="store_false", help="Disable biplanar fusion")
     parser.set_defaults(biplanar_fusion=True)
+    parser.add_argument(
+        "--os_orientation_mode",
+        choices=OS_ORIENTATION_MODES,
+        default="corrected",
+        help="OS coordinate policy. legacy_vertical_mirror is retained only for controlled regression experiments.",
+    )
     parser.add_argument("--device", type=str, default="mps")
+    parser.add_argument("--split_manifest", type=str, default=None, help="Optional JSON/CSV subject-to-split manifest. Subjects absent from the manifest are excluded.")
+    parser.add_argument("--subjects", type=str, default=None, help="Optional comma-separated subject filter for targeted or external evaluation.")
+    parser.add_argument("--eyes", type=str, default=None, help="Optional comma-separated eye filter (OD,OS).")
     args = parser.parse_args()
 
     val_subjects = [s.strip() for s in args.val_subjects.split(",")]
+    subject_filter = [s.strip() for s in args.subjects.split(",") if s.strip()] if args.subjects else None
+    eye_filter = [eye.strip().upper() for eye in args.eyes.split(",") if eye.strip()] if args.eyes else None
 
     pipeline = CohortEvaluatorPipeline(
         checkpoint_path=args.checkpoint,
@@ -972,7 +1092,11 @@ def main():
         val_subjects=val_subjects,
         device=args.device,
         batch_size=args.batch_size,
-        biplanar_fusion=args.biplanar_fusion
+        biplanar_fusion=args.biplanar_fusion,
+        os_orientation_mode=args.os_orientation_mode,
+        split_manifest=args.split_manifest,
+        subject_filter=subject_filter,
+        eye_filter=eye_filter,
     )
     pipeline.run()
 

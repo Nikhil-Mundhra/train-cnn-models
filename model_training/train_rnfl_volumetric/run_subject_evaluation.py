@@ -24,7 +24,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from dataset import find_dicom_pixel_offset, load_curves
+from dataset import find_dicom_pixel_offset, load_curves, find_subject_dicom_and_curves
 from model import VolumetricRNFLNet
 from batch_cohort_evaluator import (
     OCTVolume,
@@ -38,33 +38,7 @@ from batch_cohort_evaluator import (
 
 def find_files_for_subject(dataset_root: str, subject: str, eye: str = "OD"):
     """Locates DICOM file and XML curves for the given subject and eye."""
-    dicom_dir = os.path.join(dataset_root, "dicom", subject)
-    good_tsv_dir = os.path.join(dataset_root, "tsv", "good", subject, "curve")
-    bad_tsv_dir = os.path.join(dataset_root, "tsv", "bad", subject, "curve")
-
-    # Locate Disc Cube DICOM
-    dcm_candidates = sorted(glob.glob(os.path.join(dicom_dir, f"*{eye}*.dcm")))
-    disc_dcms = [f for f in dcm_candidates if "disc cube" in f.lower()]
-    # Prefer _OPT.dcm if available
-    opt_dcms = [f for f in disc_dcms if "_opt.dcm" in f.lower()]
-    dcm_path = opt_dcms[0] if opt_dcms else (disc_dcms[0] if disc_dcms else (dcm_candidates[0] if dcm_candidates else None))
-
-    if not dcm_path:
-        raise FileNotFoundError(f"No DICOM found for {subject} {eye} in {dicom_dir}")
-
-    # Locate Good XML
-    good_candidates = sorted(glob.glob(os.path.join(good_tsv_dir, f"*{eye}*Disc Cube*.xml")) +
-                             glob.glob(os.path.join(good_tsv_dir, f"*Disc Cube*{eye}*.xml")) +
-                             glob.glob(os.path.join(good_tsv_dir, f"*{eye}*.xml")))
-    good_xml = good_candidates[0] if good_candidates else None
-
-    # Locate Bad XML
-    bad_candidates = sorted(glob.glob(os.path.join(bad_tsv_dir, f"*{eye}*Disc Cube*.xml")) +
-                            glob.glob(os.path.join(bad_tsv_dir, f"*Disc Cube*{eye}*.xml")) +
-                            glob.glob(os.path.join(bad_tsv_dir, f"*{eye}*.xml")))
-    bad_xml = bad_candidates[0] if bad_candidates else None
-
-    return dcm_path, good_xml, bad_xml
+    return find_subject_dicom_and_curves(dataset_root, subject, eye=eye, protocol="Disc Cube")
 
 
 def rasterize_full_volume(oct_volume: OCTVolume, curve_set: str) -> np.ndarray:

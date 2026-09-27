@@ -16,6 +16,7 @@ import re
 import xml.etree.ElementTree as ET
 import numpy as np
 import torch
+from typing import Tuple, Optional, Dict, List, Set
 from torch.utils.data import Dataset
 
 AXIAL_UM = 3.12367
@@ -30,16 +31,25 @@ _ARRAY = re.compile(rb'<ARRAY>\s*(\d+)\s*</ARRAY>')
 _IMG = re.compile(rb'<IMAGE_Number>\s*(\d+)\s*</IMAGE_Number>')
 
 
-def find_matching_curve_xml(tsv_dir, subj, eye, dcm_fname, protocol="Disc Cube"):
+def find_matching_curve_xml(tsv_dir: str, subj: str, eye: str, dcm_fname: str, protocol: str = "Disc Cube") -> Optional[str]:
     """
     Finds the exact XML curve corresponding to a DICOM volume.
-    Matches via timestamp in the master XML if available, otherwise falls back to glob.
+    1. Direct match when a single curve candidate exists for the subject/eye/protocol.
+    2. Resolves ambiguous candidates by matching acquisition timestamp in master XML.
+    3. Deterministic fallback for legacy exports lacking scan metadata.
     """
     subj_tsv = os.path.join(tsv_dir, subj)
     if not os.path.exists(subj_tsv):
         return None
 
-    # Try matching by timestamp via master XML
+    # 1. Prefer an unambiguous direct curve match.
+    xmls = glob.glob(os.path.join(subj_tsv, "curve", f"*{eye}*{protocol}*.xml"))
+    if not xmls:
+        xmls = glob.glob(os.path.join(subj_tsv, "curve", f"*{protocol}*{eye}*.xml"))
+    if len(xmls) == 1:
+        return xmls[0]
+
+    # 2. Resolve ambiguous candidates by acquisition time in the master XML.
     m = re.search(r"(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})", dcm_fname)
     if m:
         target_time = f"{m.group(1)} {m.group(2)}:{m.group(3)}:{m.group(4)}"
@@ -60,11 +70,39 @@ def find_matching_curve_xml(tsv_dir, subj, eye, dcm_fname, protocol="Disc Cube")
             except Exception:
                 pass
 
-    # Fallback to globbing by eye and protocol if timestamp matching yields no result
-    xmls = glob.glob(os.path.join(subj_tsv, "curve", f"*{eye}*{protocol}*.xml"))
-    if not xmls:
-        xmls = glob.glob(os.path.join(subj_tsv, "curve", f"*{protocol}*{eye}*.xml"))
+    # 3. Deterministic fallback for legacy exports lacking scan metadata.
+    xmls = sorted(xmls)
     return xmls[0] if xmls else None
+
+
+def find_subject_dicom_and_curves(
+    dataset_root: str,
+    subject: str,
+    eye: str = "OD",
+    protocol: str = "Disc Cube"
+) -> Tuple[str, Optional[str], Optional[str]]:
+    """
+    Locates reference DICOM volume and corresponding clinician (good) and commercial (bad) curve XMLs.
+    Returns (dcm_path, good_xml_path, bad_xml_path).
+    Raises FileNotFoundError if DICOM volume is not found.
+    """
+    dicom_dir = os.path.join(dataset_root, "dicom", subject)
+    tsv_good_dir = os.path.join(dataset_root, "tsv", "good")
+    tsv_bad_dir = os.path.join(dataset_root, "tsv", "bad")
+
+    dcm_candidates = sorted(glob.glob(os.path.join(dicom_dir, f"*{eye}*.dcm")))
+    disc_dcms = [f for f in dcm_candidates if protocol.lower() in f.lower()]
+    opt_dcms = [f for f in disc_dcms if "_opt.dcm" in f.lower()]
+    dcm_path = opt_dcms[0] if opt_dcms else (disc_dcms[0] if disc_dcms else (dcm_candidates[0] if dcm_candidates else None))
+
+    if not dcm_path:
+        raise FileNotFoundError(f"No DICOM found for {subject} {eye} in {dicom_dir}")
+
+    dcm_fname = os.path.basename(dcm_path)
+    good_xml = find_matching_curve_xml(tsv_good_dir, subject, eye, dcm_fname, protocol=protocol)
+    bad_xml = find_matching_curve_xml(tsv_bad_dir, subject, eye, dcm_fname, protocol=protocol)
+
+    return dcm_path, good_xml, bad_xml
 
 
 def find_dicom_pixel_offset(path):

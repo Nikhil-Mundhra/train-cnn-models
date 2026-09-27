@@ -4,15 +4,16 @@ export_to_slicer.py
 Runs inference using a trained VolumetricRNFLNet checkpoint on a full DICOM OCT volume
 and exports the predicted 3D segmentation into 3D Slicer.
 Features:
-- Batched 2.5D inference across all B-scans
+- Batched 2.5D inference across all B-scans via VolumetricRNFLPredictor
 - Full 3D volumetric labelmap assembly (320 x 768 x 320)
-- NIfTI (.nii.gz) export and direct 3D Slicer scene generation
+- NIfTI / compressed NumPy (.npz) export and direct 3D Slicer scene generation
 """
 
 import os
 import sys
 import argparse
 from pathlib import Path
+from typing import Optional
 import numpy as np
 import torch
 
@@ -22,183 +23,94 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from dataset import read_bscan_raw, find_dicom_pixel_offset
-from model import VolumetricRNFLNet
+from batch_cohort_evaluator import (
+    OCTVolume,
+    VolumetricRNFLPredictor,
+    InferenceConfig,
+    OpticDiscCutConfig,
+)
+from orientation import OS_ORIENTATION_MODES, validate_orientation_mode
 
 
 def run_volumetric_inference(
-    model,
-    dcm_path,
-    context_slices=5,
-    device="cpu",
-    batch_size=8,
-    num_bscans=320,
-    rows=768,
-    cols=320,
-    threshold=0.40,
-    biplanar_fusion=True
-):
-    model.eval()
-    half_ctx = context_slices // 2
-    is_os = ("_OS_" in os.path.basename(dcm_path))
+    model: torch.nn.Module,
+    dcm_path: str,
+    context_slices: int = 5,
+    device: str = "cpu",
+    batch_size: int = 8,
+    num_bscans: int = 320,
+    rows: int = 768,
+    cols: int = 320,
+    threshold: float = 0.40,
+    biplanar_fusion: bool = True,
+    os_orientation_mode: str = "corrected",
+) -> np.ndarray:
+    """
+    Backward-compatible adapter that performs 3D volumetric RNFL segmentation
+    by delegating to VolumetricRNFLPredictor.
+    """
+    dev = torch.device(device)
+    config = InferenceConfig(mask_threshold=threshold)
+    predictor = VolumetricRNFLPredictor(
+        model=model,
+        device=dev,
+        batch_size=batch_size,
+        half_ctx=context_slices // 2,
+        config=config,
+        os_orientation_mode=os_orientation_mode,
+    )
 
-    print(f"[Inference] Processing {num_bscans} B-scans from {os.path.basename(dcm_path)} on {device} (Bi-Planar Fusion: {biplanar_fusion})...")
+    eye = "OS" if "_OS_" in os.path.basename(dcm_path) else "OD"
+    subject = Path(dcm_path).stem.split("_")[0]
+    oct_volume = OCTVolume(
+        subject=subject,
+        eye=eye,
+        dcm_path=dcm_path,
+        good_xml_path=None,
+        bad_xml_path=None,
+        n_bscans=num_bscans,
+        rows=rows,
+        cols=cols,
+    )
 
-    # Fast memory-mapped DICOM slice reading
-    offset = find_dicom_pixel_offset(dcm_path)
-    memmap = np.memmap(dcm_path, dtype='<u2', mode='r', offset=offset, shape=(num_bscans, rows, cols))
-
-    autocast_device = "mps" if "mps" in str(device) else ("cuda" if "cuda" in str(device) else "cpu")
-    use_amp = "mps" in str(device) or "cuda" in str(device)
-
-    # 1. Pass 1: Horizontal B-Scan Pane (Y-axis 2.5D stacks)
-    horiz_probs = np.zeros((num_bscans, rows, cols), dtype=np.float32)
-    horiz_ilm = np.zeros((num_bscans, cols), dtype=np.float32)
-    horiz_nfl = np.zeros((num_bscans, cols), dtype=np.float32)
-    horiz_cup = np.zeros((num_bscans, cols), dtype=np.float32)
-
-    for start_idx in range(0, num_bscans, batch_size):
-        end_idx = min(start_idx + batch_size, num_bscans)
-        batch_slices = []
-
-        for b_idx in range(start_idx, end_idx):
-            slice_indices = [
-                min(max(b_idx + offset_idx, 0), num_bscans - 1)
-                for offset_idx in range(-half_ctx, half_ctx + 1)
-            ]
-            stack = [memmap[s_idx] for s_idx in slice_indices]
-            img_stack = np.stack(stack, axis=0).astype(np.float32) / 2560.0
-            if is_os:
-                img_stack = np.flip(img_stack, axis=-1).copy()
-            batch_slices.append(img_stack)
-
-        batch_tensor = torch.from_numpy(np.stack(batch_slices, axis=0)).to(device)
-
-        with torch.no_grad():
-            with torch.autocast(device_type=autocast_device, dtype=torch.bfloat16, enabled=use_amp):
-                preds = model(batch_tensor)
-                probs = torch.sigmoid(preds['mask_logits']).squeeze(1).float().cpu().numpy()
-                cup_probs = torch.sigmoid(preds['cup_logits']).float().cpu().numpy()
-                ilm_preds = preds['ilm_pred'].float().cpu().numpy()
-                nfl_preds = preds['nfl_pred'].float().cpu().numpy()
-
-        if is_os:
-            probs = np.flip(probs, axis=-1).copy()
-            ilm_preds = np.flip(ilm_preds, axis=-1).copy()
-            nfl_preds = np.flip(nfl_preds, axis=-1).copy()
-            cup_probs = np.flip(cup_probs, axis=-1).copy()
-
-        horiz_probs[start_idx:end_idx] = probs
-        horiz_ilm[start_idx:end_idx] = ilm_preds
-        horiz_nfl[start_idx:end_idx] = nfl_preds
-        horiz_cup[start_idx:end_idx] = cup_probs
-
-    # 2. Pass 2: Vertical B-Scan Pane (X-axis 2.5D stacks)
-    if biplanar_fusion:
-        vert_probs = np.zeros((num_bscans, rows, cols), dtype=np.float32)
-        vert_ilm = np.zeros((cols, num_bscans), dtype=np.float32)
-        vert_nfl = np.zeros((cols, num_bscans), dtype=np.float32)
-        vert_cup = np.zeros((cols, num_bscans), dtype=np.float32)
-
-        for start_a in range(0, cols, batch_size):
-            end_a = min(start_a + batch_size, cols)
-            batch_slices = []
-            for a_idx in range(start_a, end_a):
-                eff_a = (cols - 1 - a_idx) if is_os else a_idx
-                slice_indices = [min(max(eff_a + o, 0), cols - 1) for o in range(-half_ctx, half_ctx + 1)]
-                stack = [memmap[:, :, s].T for s in slice_indices]
-                img_stack = np.stack(stack, axis=0).astype(np.float32) / 2560.0
-                batch_slices.append(img_stack)
-
-            batch_tensor = torch.from_numpy(np.stack(batch_slices, axis=0)).to(device)
-
-            with torch.no_grad():
-                with torch.autocast(device_type=autocast_device, dtype=torch.bfloat16, enabled=use_amp):
-                    preds = model(batch_tensor)
-                    v_probs = torch.sigmoid(preds['mask_logits']).squeeze(1).float().cpu().numpy()
-                    v_cup = torch.sigmoid(preds['cup_logits']).float().cpu().numpy()
-                    v_ilm = preds['ilm_pred'].float().cpu().numpy()
-                    v_nfl = preds['nfl_pred'].float().cpu().numpy()
-
-            for i, a_idx in enumerate(range(start_a, end_a)):
-                vert_probs[:, :, a_idx] = v_probs[i].T
-                vert_ilm[a_idx, :] = v_ilm[i]
-                vert_nfl[a_idx, :] = v_nfl[i]
-                vert_cup[a_idx, :] = v_cup[i]
-
-        # Fused multi-planar representations
-        fused_probs = 0.5 * (horiz_probs + vert_probs)
-        fused_ilm = 0.5 * (horiz_ilm + vert_ilm.T)
-        fused_nfl = 0.5 * (horiz_nfl + vert_nfl.T)
-        fused_cup = 0.5 * (horiz_cup + vert_cup.T)
-    else:
-        fused_probs = horiz_probs
-        fused_ilm = horiz_ilm
-        fused_nfl = horiz_nfl
-        fused_cup = horiz_cup
-
-    # 3. Dense Segmentation & Hybrid Surface-Guided Recovery
-    full_vol_mask = (fused_probs > threshold).astype(np.uint8)
-
-    for b in range(num_bscans):
-        col_sums = full_vol_mask[b].sum(axis=0)
-        valid_tissue = (fused_cup[b] < 0.5) & ((fused_nfl[b] - fused_ilm[b]) >= 2.0)
-        dropouts = np.where((col_sums == 0) & valid_tissue)[0]
-        for x in dropouts:
-            y0 = int(np.clip(np.round(fused_ilm[b, x]), 0, rows))
-            y1 = int(np.clip(np.round(fused_nfl[b, x]), 0, rows))
-            if y1 > y0:
-                full_vol_mask[b, y0:y1, x] = 1
-
-    # -------------------------------------------------------------------------
-    # Optic Disc Size & Anatomical Vertical Cut
-    # Average normal human optic disc dimensions:
-    # - Vertical diameter: ~1.8 to 1.9 mm (mean: 1.85 mm -> vertical radius ~0.925 mm)
-    # - Horizontal diameter: ~1.7 to 1.8 mm (mean: 1.75 mm -> horizontal radius ~0.875 mm)
-    # Solix Disc Cube: dx = 0.01875 mm/px, dz = 0.0188088 mm/slice
-    # Cut occurs from center (zc, xc) to that radius on either side.
-    # -------------------------------------------------------------------------
-    dx_mm = 0.01875
-    dz_mm = 0.0188088
-    rad_x_px = (1.75 / 2.0) / dx_mm       # ~46.67 pixels
-    rad_z_slices = (1.85 / 2.0) / dz_mm   # ~49.18 slices
-
-    # Disc center from scan geometry / cup prior (default: volume center)
-    zc, xc = num_bscans // 2, cols // 2
-
-    for z in range(num_bscans):
-        dz_val = abs(z - zc)
-        if dz_val <= rad_z_slices:
-            rx_z = rad_x_px * np.sqrt(max(0.0, 1.0 - (dz_val / rad_z_slices) ** 2))
-            x_left = max(0, int(round(xc - rx_z)))
-            x_right = min(cols - 1, int(round(xc + rx_z)))
-            full_vol_mask[z, :, x_left : x_right + 1] = 0
-
-    print(f"[Inference] Completed! Total RNFL voxels: {np.sum(full_vol_mask == 1)}")
-    return full_vol_mask
+    prediction = predictor.predict(oct_volume, biplanar_fusion=biplanar_fusion)
+    return prediction.mask
 
 
 def export_prediction(
-    checkpoint_path,
-    dcm_path,
-    output_dir="./predictions",
-    device="",
-    launch_slicer=False
-):
+    checkpoint_path: str,
+    dcm_path: str,
+    output_dir: str = "./predictions",
+    device: str = "",
+    launch_slicer: bool = False,
+    os_orientation_mode: str = "corrected",
+    biplanar_fusion: bool = True,
+) -> str:
     dev = torch.device(device if device else ("mps" if torch.backends.mps.is_available() else "cpu"))
     os.makedirs(output_dir, exist_ok=True)
 
-    print(f"Loading checkpoint: {checkpoint_path}")
-    ckpt = torch.load(checkpoint_path, map_location=dev, weights_only=False)
+    print(f"Loading checkpoint with VolumetricRNFLPredictor: {checkpoint_path}")
+    predictor = VolumetricRNFLPredictor.from_checkpoint(
+        checkpoint_path=checkpoint_path,
+        device=dev,
+        batch_size=8,
+        os_orientation_mode=os_orientation_mode,
+    )
 
-    model = VolumetricRNFLNet(
-        in_channels=ckpt['args'].get('context_slices', 5),
-        base_channels=16
-    ).to(dev)
-    model.load_state_dict(ckpt['model_state_dict'])
+    eye = "OS" if "_OS_" in os.path.basename(dcm_path) else "OD"
+    subject = Path(dcm_path).stem.split("_")[0]
+    oct_volume = OCTVolume(
+        subject=subject,
+        eye=eye,
+        dcm_path=dcm_path,
+        good_xml_path=None,
+        bad_xml_path=None,
+    )
 
-    # Run inference
-    pred_mask = run_volumetric_inference(model, dcm_path, device=dev)
+    print(f"[Export] Running 3D volumetric prediction on {dcm_path} (biplanar={biplanar_fusion}, mode={os_orientation_mode})...")
+    prediction = predictor.predict(oct_volume, biplanar_fusion=biplanar_fusion)
+    pred_mask = prediction.mask
+    print(f"[Export] Completed! Total RNFL voxels: {np.sum(pred_mask == 1):,}")
 
     # Save as compressed numpy
     base_name = Path(dcm_path).stem
@@ -238,14 +150,24 @@ print("Prediction loaded live in 3D Slicer!")
         print(f"[Export] Generated Slicer loader script: {slicer_script}")
         print(f"[Export] Run with: /Applications/Slicer.app/Contents/MacOS/Slicer --python-script {slicer_script}")
 
+    return out_npz
+
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint", type=str, required=True)
-    parser.add_argument("--dcm", type=str, required=True)
-    parser.add_argument("--output_dir", type=str, default="./predictions")
-    parser.add_argument("--device", type=str, default="")
-    parser.add_argument("--launch_slicer", action="store_true")
+    parser = argparse.ArgumentParser(description="Export Volumetric RNFL predictions to 3D Slicer")
+    parser.add_argument("--checkpoint", type=str, required=True, help="Path to trained model checkpoint (.pt)")
+    parser.add_argument("--dcm", type=str, required=True, help="Path to target DICOM volume")
+    parser.add_argument("--output_dir", type=str, default="./predictions", help="Directory to save predictions")
+    parser.add_argument("--device", type=str, default="", help="Torch device (e.g. cpu, mps, cuda)")
+    parser.add_argument("--launch_slicer", action="store_true", help="Generate helper script to launch 3D Slicer")
+    parser.add_argument("--disable_biplanar", dest="biplanar_fusion", action="store_false", help="Disable biplanar fusion")
+    parser.set_defaults(biplanar_fusion=True)
+    parser.add_argument(
+        "--os_orientation_mode",
+        choices=OS_ORIENTATION_MODES,
+        default="corrected",
+        help="OS coordinate policy (corrected or legacy_vertical_mirror)",
+    )
     args = parser.parse_args()
 
     export_prediction(
@@ -253,5 +175,7 @@ if __name__ == "__main__":
         dcm_path=args.dcm,
         output_dir=args.output_dir,
         device=args.device,
-        launch_slicer=args.launch_slicer
+        launch_slicer=args.launch_slicer,
+        os_orientation_mode=args.os_orientation_mode,
+        biplanar_fusion=args.biplanar_fusion,
     )
