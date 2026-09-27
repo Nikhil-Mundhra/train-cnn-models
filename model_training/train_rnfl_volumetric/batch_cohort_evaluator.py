@@ -85,6 +85,33 @@ class VolumePrediction:
     cup_probs: np.ndarray   # (320, 320) float32
 
 
+@dataclass(frozen=True)
+class OpticDiscCutConfig:
+    """Anatomical dimensions and scale factors for optic disc cup masking."""
+    dx_mm: float = 0.01875        # Solix Disc Cube horizontal resolution (mm/px)
+    dz_mm: float = 0.0188088      # Solix Disc Cube slice step (mm/slice)
+    disc_diam_x_mm: float = 1.75  # Mean anatomical horizontal optic disc diameter (mm)
+    disc_diam_z_mm: float = 1.85  # Mean anatomical vertical optic disc diameter (mm)
+
+    @property
+    def rad_x_px(self) -> float:
+        return (self.disc_diam_x_mm / 2.0) / self.dx_mm
+
+    @property
+    def rad_z_slices(self) -> float:
+        return (self.disc_diam_z_mm / 2.0) / self.dz_mm
+
+
+@dataclass(frozen=True)
+class InferenceConfig:
+    """Hyperparameters for neural network volume inference and post-processing."""
+    norm_divisor: float = 2560.0
+    mask_threshold: float = 0.40
+    cup_threshold: float = 0.50
+    min_layer_thickness: float = 2.0  # Minimum NFL - ILM thickness in px for valid tissue
+
+
+
 # ============================================================================
 # 2. Data Layer: OCTVolume
 # ============================================================================
@@ -202,12 +229,16 @@ class VolumetricRNFLPredictor:
         model: torch.nn.Module,
         device: torch.device,
         batch_size: int = 8,
-        half_ctx: int = 2
+        half_ctx: int = 2,
+        config: InferenceConfig = InferenceConfig(),
+        disc_cut_config: OpticDiscCutConfig = OpticDiscCutConfig(),
     ):
         self.model = model
         self.device = device
         self.batch_size = batch_size
         self.half_ctx = half_ctx
+        self.config = config
+        self.disc_cut_config = disc_cut_config
         self.model.eval()
 
         self.use_amp = "mps" in str(device) or "cuda" in str(device)
@@ -245,6 +276,159 @@ class VolumetricRNFLPredictor:
         model.eval()
         return cls(model=model, device=device, batch_size=batch_size)
 
+    def _forward_batch(self, batch_tensor: torch.Tensor) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Executes a single forward pass under autocast and converts outputs to numpy arrays."""
+        with torch.no_grad():
+            with torch.autocast(device_type=self.autocast_device, dtype=torch.bfloat16, enabled=self.use_amp):
+                preds = self.model(batch_tensor)
+                probs = torch.sigmoid(preds['mask_logits']).squeeze(1).float().cpu().numpy()
+                cup_probs = torch.sigmoid(preds['cup_logits']).float().cpu().numpy()
+                ilm_preds = preds['ilm_pred'].float().cpu().numpy()
+                nfl_preds = preds['nfl_pred'].float().cpu().numpy()
+        return probs, ilm_preds, nfl_preds, cup_probs
+
+    def _infer_horizontal_pane(
+        self,
+        oct_volume: OCTVolume
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Performs 2.5D context inference across horizontal B-scans (Z-axis slices)."""
+        is_os = (oct_volume.eye == "OS")
+        memmap = oct_volume.memmap
+        n_bscans = oct_volume.n_bscans
+        rows = oct_volume.rows
+        cols = oct_volume.cols
+
+        full_probs = np.zeros((n_bscans, rows, cols), dtype=np.float32)
+        full_ilm = np.zeros((n_bscans, cols), dtype=np.float32)
+        full_nfl = np.zeros((n_bscans, cols), dtype=np.float32)
+        full_cup = np.zeros((n_bscans, cols), dtype=np.float32)
+
+        for start_idx in range(0, n_bscans, self.batch_size):
+            end_idx = min(start_idx + self.batch_size, n_bscans)
+            batch_slices = []
+            for b_idx in range(start_idx, end_idx):
+                slice_indices = [min(max(b_idx + o, 0), n_bscans - 1) for o in range(-self.half_ctx, self.half_ctx + 1)]
+                stack = [memmap[s] for s in slice_indices]
+                img_stack = np.stack(stack, axis=0).astype(np.float32) / self.config.norm_divisor
+                if is_os:
+                    img_stack = np.flip(img_stack, axis=-1).copy()
+                batch_slices.append(img_stack)
+
+            batch_tensor = torch.from_numpy(np.stack(batch_slices, axis=0)).to(self.device)
+            probs, ilm_preds, nfl_preds, cup_probs = self._forward_batch(batch_tensor)
+
+            if is_os:
+                probs = np.flip(probs, axis=-1).copy()
+                ilm_preds = np.flip(ilm_preds, axis=-1).copy()
+                nfl_preds = np.flip(nfl_preds, axis=-1).copy()
+                cup_probs = np.flip(cup_probs, axis=-1).copy()
+
+            full_probs[start_idx:end_idx] = probs
+            full_ilm[start_idx:end_idx] = ilm_preds
+            full_nfl[start_idx:end_idx] = nfl_preds
+            full_cup[start_idx:end_idx] = cup_probs
+
+        return full_probs, full_ilm, full_nfl, full_cup
+
+    def _infer_vertical_pane(
+        self,
+        oct_volume: OCTVolume
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Performs 2.5D context inference across orthogonal vertical planes (X-axis slices)."""
+        is_os = (oct_volume.eye == "OS")
+        memmap = oct_volume.memmap
+        n_bscans = oct_volume.n_bscans
+        rows = oct_volume.rows
+        cols = oct_volume.cols
+
+        full_probs = np.zeros((n_bscans, rows, cols), dtype=np.float32)
+        full_ilm = np.zeros((cols, n_bscans), dtype=np.float32)
+        full_nfl = np.zeros((cols, n_bscans), dtype=np.float32)
+        full_cup = np.zeros((cols, n_bscans), dtype=np.float32)
+
+        for start_a in range(0, cols, self.batch_size):
+            end_a = min(start_a + self.batch_size, cols)
+            batch_slices = []
+            for a_idx in range(start_a, end_a):
+                eff_a = (cols - 1 - a_idx) if is_os else a_idx
+                slice_indices = [min(max(eff_a + o, 0), cols - 1) for o in range(-self.half_ctx, self.half_ctx + 1)]
+                # Transpose (320, 768) -> (768, 320)
+                stack = [memmap[:, :, s].T for s in slice_indices]
+                img_stack = np.stack(stack, axis=0).astype(np.float32) / self.config.norm_divisor
+                batch_slices.append(img_stack)
+
+            batch_tensor = torch.from_numpy(np.stack(batch_slices, axis=0)).to(self.device)
+            v_probs, v_ilm, v_nfl, v_cup = self._forward_batch(batch_tensor)
+
+            for i, a_idx in enumerate(range(start_a, end_a)):
+                # Transpose (768, 320) -> (320, 768) to map (Z, Y) back to (Y, Z)
+                full_probs[:, :, a_idx] = v_probs[i].T
+                full_ilm[a_idx, :] = v_ilm[i]
+                full_nfl[a_idx, :] = v_nfl[i]
+                full_cup[a_idx, :] = v_cup[i]
+
+        return full_probs, full_ilm, full_nfl, full_cup
+
+    @staticmethod
+    def _fuse_predictions(
+        horiz: Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+        vert: Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Fuses horizontal and orthogonal vertical predictions via biplanar averaging."""
+        h_probs, h_ilm, h_nfl, h_cup = horiz
+        v_probs, v_ilm, v_nfl, v_cup = vert
+        fused_probs = 0.5 * (h_probs + v_probs)
+        fused_ilm = 0.5 * (h_ilm + v_ilm.T)
+        fused_nfl = 0.5 * (h_nfl + v_nfl.T)
+        fused_cup = 0.5 * (h_cup + v_cup.T)
+        return fused_probs, fused_ilm, fused_nfl, fused_cup
+
+    @staticmethod
+    def recover_thin_dropouts(
+        mask: np.ndarray,
+        fused_ilm: np.ndarray,
+        fused_nfl: np.ndarray,
+        fused_cup: np.ndarray,
+        config: InferenceConfig = InferenceConfig()
+    ) -> np.ndarray:
+        """Recovers thin segmentation dropouts using continuous 1D surface boundaries."""
+        out_mask = mask.copy()
+        n_bscans, rows, _ = out_mask.shape
+        for b in range(n_bscans):
+            col_sums = out_mask[b].sum(axis=0)
+            valid_tissue = (fused_cup[b] < config.cup_threshold) & (
+                (fused_nfl[b] - fused_ilm[b]) >= config.min_layer_thickness
+            )
+            dropouts = np.where((col_sums == 0) & valid_tissue)[0]
+            for x in dropouts:
+                y0 = int(np.clip(np.round(fused_ilm[b, x]), 0, rows))
+                y1 = int(np.clip(np.round(fused_nfl[b, x]), 0, rows))
+                if y1 > y0:
+                    out_mask[b, y0:y1, x] = 1
+        return out_mask
+
+    @staticmethod
+    def apply_elliptical_disc_cut(
+        mask: np.ndarray,
+        zc: int,
+        xc: int,
+        config: OpticDiscCutConfig = OpticDiscCutConfig()
+    ) -> np.ndarray:
+        """Applies anatomical elliptical optic disc cup void cut to the volumetric mask."""
+        out_mask = mask.copy()
+        n_bscans, _, cols = out_mask.shape
+        rad_x_px = config.rad_x_px
+        rad_z_slices = config.rad_z_slices
+
+        for z in range(n_bscans):
+            dz_val = abs(z - zc)
+            if dz_val <= rad_z_slices:
+                rx_z = rad_x_px * np.sqrt(max(0.0, 1.0 - (dz_val / rad_z_slices) ** 2))
+                x_left = max(0, int(round(xc - rx_z)))
+                x_right = min(cols - 1, int(round(xc + rx_z)))
+                out_mask[z, :, x_left : x_right + 1] = 0
+        return out_mask
+
     def predict(self, oct_volume: OCTVolume, biplanar_fusion: bool = True) -> VolumePrediction:
         """
         Performs full 3D volumetric segmentation.
@@ -253,139 +437,27 @@ class VolumetricRNFLPredictor:
         2. Vertical A-scan pane (X-axis slicing)
         Fuses predictions to eliminate directional blind spots and peripheral cutoffs.
         """
-        is_os = (oct_volume.eye == "OS")
-        memmap = oct_volume.memmap
-        n_bscans = oct_volume.n_bscans
-        rows = oct_volume.rows
-        cols = oct_volume.cols
+        horiz_preds = self._infer_horizontal_pane(oct_volume)
 
-        # ---------------------------------------------------------------------
-        # Pass 1: Horizontal B-Scan Pane (Y-axis 2.5D stacks)
-        # ---------------------------------------------------------------------
-        full_horiz_probs = np.zeros((n_bscans, rows, cols), dtype=np.float32)
-        full_horiz_ilm = np.zeros((n_bscans, cols), dtype=np.float32)
-        full_horiz_nfl = np.zeros((n_bscans, cols), dtype=np.float32)
-        full_horiz_cup = np.zeros((n_bscans, cols), dtype=np.float32)
-
-        for start_idx in range(0, n_bscans, self.batch_size):
-            end_idx = min(start_idx + self.batch_size, n_bscans)
-            batch_slices = []
-            for b_idx in range(start_idx, end_idx):
-                slice_indices = [min(max(b_idx + o, 0), n_bscans - 1) for o in range(-self.half_ctx, self.half_ctx + 1)]
-                stack = [memmap[s] for s in slice_indices]
-                img_stack = np.stack(stack, axis=0).astype(np.float32) / 2560.0
-                if is_os:
-                    img_stack = np.flip(img_stack, axis=-1).copy()
-                batch_slices.append(img_stack)
-
-            batch_tensor = torch.from_numpy(np.stack(batch_slices, axis=0)).to(self.device)
-
-            with torch.no_grad():
-                with torch.autocast(device_type=self.autocast_device, dtype=torch.bfloat16, enabled=self.use_amp):
-                    preds = self.model(batch_tensor)
-                    probs = torch.sigmoid(preds['mask_logits']).squeeze(1).float().cpu().numpy()
-                    cup_probs = torch.sigmoid(preds['cup_logits']).float().cpu().numpy()
-                    ilm_preds = preds['ilm_pred'].float().cpu().numpy()
-                    nfl_preds = preds['nfl_pred'].float().cpu().numpy()
-
-            if is_os:
-                probs = np.flip(probs, axis=-1).copy()
-                ilm_preds = np.flip(ilm_preds, axis=-1).copy()
-                nfl_preds = np.flip(nfl_preds, axis=-1).copy()
-                cup_probs = np.flip(cup_probs, axis=-1).copy()
-
-            full_horiz_probs[start_idx:end_idx] = probs
-            full_horiz_ilm[start_idx:end_idx] = ilm_preds
-            full_horiz_nfl[start_idx:end_idx] = nfl_preds
-            full_horiz_cup[start_idx:end_idx] = cup_probs
-
-        # ---------------------------------------------------------------------
-        # Pass 2: Vertical B-Scan Pane (X-axis 2.5D stacks)
-        # ---------------------------------------------------------------------
         if biplanar_fusion:
-            full_vert_probs = np.zeros((n_bscans, rows, cols), dtype=np.float32)
-            full_vert_ilm = np.zeros((cols, n_bscans), dtype=np.float32)
-            full_vert_nfl = np.zeros((cols, n_bscans), dtype=np.float32)
-            full_vert_cup = np.zeros((cols, n_bscans), dtype=np.float32)
-
-            for start_a in range(0, cols, self.batch_size):
-                end_a = min(start_a + self.batch_size, cols)
-                batch_slices = []
-                for a_idx in range(start_a, end_a):
-                    eff_a = (cols - 1 - a_idx) if is_os else a_idx
-                    slice_indices = [min(max(eff_a + o, 0), cols - 1) for o in range(-self.half_ctx, self.half_ctx + 1)]
-                    # Transpose (320, 768) -> (768, 320)
-                    stack = [memmap[:, :, s].T for s in slice_indices]
-                    img_stack = np.stack(stack, axis=0).astype(np.float32) / 2560.0
-                    batch_slices.append(img_stack)
-
-                batch_tensor = torch.from_numpy(np.stack(batch_slices, axis=0)).to(self.device)
-
-                with torch.no_grad():
-                    with torch.autocast(device_type=self.autocast_device, dtype=torch.bfloat16, enabled=self.use_amp):
-                        preds = self.model(batch_tensor)
-                        v_probs = torch.sigmoid(preds['mask_logits']).squeeze(1).float().cpu().numpy()
-                        v_cup = torch.sigmoid(preds['cup_logits']).float().cpu().numpy()
-                        v_ilm = preds['ilm_pred'].float().cpu().numpy()
-                        v_nfl = preds['nfl_pred'].float().cpu().numpy()
-
-                for i, a_idx in enumerate(range(start_a, end_a)):
-                    # Transpose (768, 320) -> (320, 768) to map (Z, Y) back to (Y, Z)
-                    full_vert_probs[:, :, a_idx] = v_probs[i].T
-                    full_vert_ilm[a_idx, :] = v_ilm[i]
-                    full_vert_nfl[a_idx, :] = v_nfl[i]
-                    full_vert_cup[a_idx, :] = v_cup[i]
-
-            # Multi-Planar Fusion: Average horizontal and vertical representations
-            fused_probs = 0.5 * (full_horiz_probs + full_vert_probs)
-            fused_ilm = 0.5 * (full_horiz_ilm + full_vert_ilm.T)
-            fused_nfl = 0.5 * (full_horiz_nfl + full_vert_nfl.T)
-            fused_cup = 0.5 * (full_horiz_cup + full_vert_cup.T)
+            vert_preds = self._infer_vertical_pane(oct_volume)
+            fused_probs, fused_ilm, fused_nfl, fused_cup = self._fuse_predictions(horiz_preds, vert_preds)
         else:
-            fused_probs = full_horiz_probs
-            fused_ilm = full_horiz_ilm
-            fused_nfl = full_horiz_nfl
-            fused_cup = full_horiz_cup
+            fused_probs, fused_ilm, fused_nfl, fused_cup = horiz_preds
 
-        # ---------------------------------------------------------------------
-        # 3. Dense Segmentation & Hybrid Surface-Guided Recovery
-        # ---------------------------------------------------------------------
-        full_mask = (fused_probs > 0.40).astype(np.uint8)
+        # Dense Segmentation & Hybrid Surface-Guided Recovery
+        full_mask = (fused_probs > self.config.mask_threshold).astype(np.uint8)
+        full_mask = self.recover_thin_dropouts(
+            full_mask, fused_ilm, fused_nfl, fused_cup, config=self.config
+        )
 
-        # Recover any thin dropouts using the continuous fused 1D surface boundaries
-        for b in range(n_bscans):
-            col_sums = full_mask[b].sum(axis=0)  # (W,)
-            valid_tissue = (fused_cup[b] < 0.5) & ((fused_nfl[b] - fused_ilm[b]) >= 2.0)
-            dropouts = np.where((col_sums == 0) & valid_tissue)[0]
-            for x in dropouts:
-                y0 = int(np.clip(np.round(fused_ilm[b, x]), 0, rows))
-                y1 = int(np.clip(np.round(fused_nfl[b, x]), 0, rows))
-                if y1 > y0:
-                    full_mask[b, y0:y1, x] = 1
-
-        # -------------------------------------------------------------------------
-        # Optic Disc Size & Anatomical Vertical Cut
-        # Average normal human optic disc dimensions:
-        # - Vertical diameter: ~1.8 to 1.9 mm (mean: 1.85 mm -> vertical radius ~0.925 mm)
-        # - Horizontal diameter: ~1.7 to 1.8 mm (mean: 1.75 mm -> horizontal radius ~0.875 mm)
-        # Solix Disc Cube: dx = 0.01875 mm/px, dz = 0.0188088 mm/slice
-        # Vertical cut occurs from the center (zc, xc) to that radius on either side.
-        # -------------------------------------------------------------------------
-        dx_mm = 0.01875
-        dz_mm = 0.0188088
-        rad_x_px = (1.75 / 2.0) / dx_mm       # ~46.67 pixels
-        rad_z_slices = (1.85 / 2.0) / dz_mm   # ~49.18 slices
-
-        zc = oct_volume.disc_geometry.zc
-        xc = oct_volume.disc_geometry.xc
-
-        for z in range(n_bscans):
-            dz_val = abs(z - zc)
-            if dz_val <= rad_z_slices:
-                rx_z = rad_x_px * np.sqrt(max(0.0, 1.0 - (dz_val / rad_z_slices) ** 2))
-                x_left = max(0, int(round(xc - rx_z)))
-                x_right = min(cols - 1, int(round(xc + rx_z)))
-                full_mask[z, :, x_left : x_right + 1] = 0
+        # Optic Disc Size & Anatomical Elliptical Cut
+        full_mask = self.apply_elliptical_disc_cut(
+            full_mask,
+            zc=oct_volume.disc_geometry.zc,
+            xc=oct_volume.disc_geometry.xc,
+            config=self.disc_cut_config
+        )
 
         return VolumePrediction(
             mask=full_mask,
@@ -785,65 +857,64 @@ class CohortEvaluatorPipeline:
             xmls = glob.glob(os.path.join(subj_tsv, "curve", f"*{protocol}*{eye}*.xml"))
         return xmls[0] if xmls else None
 
-    def run(self) -> List[ScanEvaluationResult]:
-        volumes = self.discover_volumes()
-        print(f"[Cohort Pipeline] Discovered {len(volumes)} valid volumes across cohort.")
+    def _evaluate_single_volume(
+        self,
+        vol: OCTVolume,
+        seen_gallery_subjects: List[str]
+    ) -> Tuple[ScanEvaluationResult, Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        """Evaluates a single OCT volume and creates gallery/deep-dive entries if applicable."""
+        print(f"\n---> Evaluating {vol.subject} ({vol.eye}) [{vol.cohort_tag}]...")
 
-        cohort_results: List[ScanEvaluationResult] = []
-        gallery_manifest: List[Dict[str, Any]] = []
-        deep_dive_manifest: List[Dict[str, Any]] = []
+        # 1. Volumetric Inference
+        prediction = self.predictor.predict(vol, biplanar_fusion=self.biplanar_fusion)
 
-        for vol in volumes:
-            print(f"\n---> Evaluating {vol.subject} ({vol.eye}) [{vol.cohort_tag}]...")
+        # 2. Metric Computation
+        result = self.metrics_calc.evaluate_scan(vol, prediction)
 
-            # 1. Inference
-            prediction = self.predictor.predict(vol, biplanar_fusion=self.biplanar_fusion)
+        print(f"[{vol.subject} {vol.eye}] U-Net Dice: {result.unet_dice:.4f} | MABE: {result.unet_mabe:.2f} µm | P95: {result.unet_p95:.2f} µm | Cup IoU: {result.unet_cup_iou:.4f}")
+        if result.bad_dice is not None:
+            print(f"[{vol.subject} {vol.eye}] Bad   Dice: {result.bad_dice:.4f} | MABE: {result.bad_mabe:.2f} µm | P95: {result.bad_p95:.2f} µm | Cup IoU: {result.bad_cup_iou:.4f}")
 
-            # 2. Metric Computation
-            result = self.metrics_calc.evaluate_scan(vol, prediction)
-            cohort_results.append(result)
+        # 3. Visuals for OD acquisitions or unseen subjects
+        gallery_entry = None
+        deep_dive_entry = None
+        if vol.eye == "OD" or vol.subject not in seen_gallery_subjects:
+            g_file = self.visualizer.render_gallery_panel(vol, prediction)
+            gallery_entry = {
+                'subject': vol.subject,
+                'eye': vol.eye,
+                'cohort': vol.cohort_tag,
+                'filename': g_file,
+                'dice': result.unet_dice,
+                'mabe': result.unet_mabe
+            }
 
-            print(f"[{vol.subject} {vol.eye}] U-Net Dice: {result.unet_dice:.4f} | MABE: {result.unet_mabe:.2f} µm | P95: {result.unet_p95:.2f} µm | Cup IoU: {result.unet_cup_iou:.4f}")
-            if result.bad_dice is not None:
-                print(f"[{vol.subject} {vol.eye}] Bad   Dice: {result.bad_dice:.4f} | MABE: {result.bad_mabe:.2f} µm | P95: {result.bad_p95:.2f} µm | Cup IoU: {result.bad_cup_iou:.4f}")
-
-            # 3. Visuals for OD acquisitions
-            if vol.eye == "OD" or vol.subject not in [g['subject'] for g in gallery_manifest]:
-                g_file = self.visualizer.render_gallery_panel(vol, prediction)
-                gallery_manifest.append({
+            if vol.is_validation or vol.subject in ["BEH0181", "BEH0174"]:
+                dd_file = self.visualizer.render_deep_dive_panel(vol, prediction)
+                deep_dive_entry = {
                     'subject': vol.subject,
                     'eye': vol.eye,
                     'cohort': vol.cohort_tag,
-                    'filename': g_file,
-                    'dice': result.unet_dice,
-                    'mabe': result.unet_mabe
-                })
+                    'filename': dd_file
+                }
 
-                if vol.is_validation or vol.subject in ["BEH0181", "BEH0174"]:
-                    dd_file = self.visualizer.render_deep_dive_panel(vol, prediction)
-                    deep_dive_manifest.append({
-                        'subject': vol.subject,
-                        'eye': vol.eye,
-                        'cohort': vol.cohort_tag,
-                        'filename': dd_file
-                    })
+        return result, gallery_entry, deep_dive_entry
 
-        # 4. Generate Cohort Publication Charts (Dual-Theme: Dark & Light)
+    def _export_reports(
+        self,
+        cohort_results: List[ScanEvaluationResult],
+        gallery_manifest: List[Dict[str, Any]],
+        deep_dive_manifest: List[Dict[str, Any]]
+    ) -> str:
+        """Renders publication summary charts (dual-theme) and exports JSON metrics manifest."""
         print("\n[Cohort Pipeline] Generating Publication Cohort Summary Charts (Dual-Theme)...")
-        # Dark Theme (default for .md)
-        self.visualizer.render_cohort_summary_chart(cohort_results, theme="dark")
-        self.visualizer.render_statistical_raincloud_chart(cohort_results, theme="dark")
-        self.visualizer.render_complete_scan_forest_chart(cohort_results, theme="dark")
-        self.visualizer.render_baseline_comparison_chart(cohort_results, theme="dark")
-
-        # Light Theme (publication white for PDF)
-        self.visualizer.render_cohort_summary_chart(cohort_results, theme="light")
-        self.visualizer.render_statistical_raincloud_chart(cohort_results, theme="light")
-        self.visualizer.render_complete_scan_forest_chart(cohort_results, theme="light")
-        self.visualizer.render_baseline_comparison_chart(cohort_results, theme="light")
+        for theme in ("dark", "light"):
+            self.visualizer.render_cohort_summary_chart(cohort_results, theme=theme)
+            self.visualizer.render_statistical_raincloud_chart(cohort_results, theme=theme)
+            self.visualizer.render_complete_scan_forest_chart(cohort_results, theme=theme)
+            self.visualizer.render_baseline_comparison_chart(cohort_results, theme=theme)
         print("[Cohort Pipeline] Summary charts saved in both dark (.png) and light (_light.png) themes.")
 
-        # 5. Export JSON Manifest
         json_path = os.path.join(self.assets_dir, "cohort_evaluation_metrics.json")
         with open(json_path, "w") as f:
             json.dump({
@@ -852,7 +923,27 @@ class CohortEvaluatorPipeline:
                 'deep_dives': deep_dive_manifest
             }, f, indent=2)
         print(f"[Cohort Pipeline] Metrics JSON saved to: {json_path}")
+        return json_path
 
+    def run(self) -> List[ScanEvaluationResult]:
+        """Executes full cohort evaluation across all discovered patient volumes."""
+        volumes = self.discover_volumes()
+        print(f"[Cohort Pipeline] Discovered {len(volumes)} valid volumes across cohort.")
+
+        cohort_results: List[ScanEvaluationResult] = []
+        gallery_manifest: List[Dict[str, Any]] = []
+        deep_dive_manifest: List[Dict[str, Any]] = []
+
+        for vol in volumes:
+            seen_subjs = [g['subject'] for g in gallery_manifest]
+            result, g_entry, dd_entry = self._evaluate_single_volume(vol, seen_subjs)
+            cohort_results.append(result)
+            if g_entry:
+                gallery_manifest.append(g_entry)
+            if dd_entry:
+                deep_dive_manifest.append(dd_entry)
+
+        self._export_reports(cohort_results, gallery_manifest, deep_dive_manifest)
         return cohort_results
 
 
