@@ -802,6 +802,24 @@ class CohortVisualizer:
         plt.close(fig)
         return out_path
 
+    def render_statistical_raincloud_chart(self, scan_results: List[ScanEvaluationResult]) -> str:
+        """Renders publication Figure 1: Raincloud distributions."""
+        from build_cohort_report import render_statistical_raincloud_chart
+        out_path = os.path.join(self.output_dir, "cohort_raincloud_distributions.png")
+        return render_statistical_raincloud_chart([r.to_dict() for r in scan_results], out_path)
+
+    def render_complete_scan_forest_chart(self, scan_results: List[ScanEvaluationResult]) -> str:
+        """Renders publication Figure 2: Complete 46-scan ranked forest chart."""
+        from build_cohort_report import render_complete_scan_forest_chart
+        out_path = os.path.join(self.output_dir, "cohort_per_scan_forest_plot.png")
+        return render_complete_scan_forest_chart([r.to_dict() for r in scan_results], out_path)
+
+    def render_baseline_comparison_chart(self, scan_results: List[ScanEvaluationResult]) -> Optional[str]:
+        """Renders publication Figure 3: Baseline vs U-Net comparative delta."""
+        from build_cohort_report import render_baseline_comparison_chart
+        out_path = os.path.join(self.output_dir, "baseline_vs_unet_head_to_head.png")
+        return render_baseline_comparison_chart([r.to_dict() for r in scan_results], out_path)
+
 
 # ============================================================================
 # 6. Pipeline Orchestration: CohortEvaluatorPipeline
@@ -949,10 +967,17 @@ class CohortEvaluatorPipeline:
                         'filename': dd_file
                     })
 
-        # 4. Generate Cohort Summary Chart
-        print("\n[Cohort Pipeline] Generating Publication Cohort Summary Chart...")
+        # 4. Generate Cohort Publication Charts
+        print("\n[Cohort Pipeline] Generating Publication Cohort Summary Charts...")
         chart_path = self.visualizer.render_cohort_summary_chart(cohort_results)
         print(f"[Cohort Pipeline] Summary chart saved to: {chart_path}")
+        raincloud_path = self.visualizer.render_statistical_raincloud_chart(cohort_results)
+        print(f"[Cohort Pipeline] Raincloud quad-plot saved to: {raincloud_path}")
+        forest_path = self.visualizer.render_complete_scan_forest_chart(cohort_results)
+        print(f"[Cohort Pipeline] Complete scan forest plot saved to: {forest_path}")
+        baseline_path = self.visualizer.render_baseline_comparison_chart(cohort_results)
+        if baseline_path:
+            print(f"[Cohort Pipeline] Baseline comparison chart saved to: {baseline_path}")
 
         # 5. Export JSON Manifest
         json_path = os.path.join(self.assets_dir, "cohort_evaluation_metrics.json")
