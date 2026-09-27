@@ -653,172 +653,33 @@ class CohortVisualizer:
         plt.close(fig)
         return filename
 
-    def render_cohort_summary_chart(self, scan_results: List[ScanEvaluationResult]) -> str:
+    def render_cohort_summary_chart(self, scan_results: List[ScanEvaluationResult], theme: str = "dark") -> str:
         """Renders the executive summary chart with orange validation highlights."""
-        od_scans = [s for s in scan_results if s.eye == "OD"]
-        subjects = [s.subject for s in od_scans]
-        unet_dices = [s.unet_dice for s in od_scans]
-        bad_dices = [s.bad_dice if s.bad_dice is not None else 0.0 for s in od_scans]
-        unet_mabes = [s.unet_mabe for s in od_scans]
-        unet_cup_ious = [s.unet_cup_iou for s in od_scans]
-        is_val = [s.is_validation for s in od_scans]
+        from build_cohort_report import render_cohort_summary_chart
+        suffix = "_light.png" if theme == "light" else ".png"
+        out_path = os.path.join(self.output_dir, f"cohort_summary_chart{suffix}")
+        return render_cohort_summary_chart([r.to_dict() for r in scan_results], out_path, theme=theme)
 
-        mirror_subjects = {"BEH0181", "BEH0398", "BEH0410"}
-
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(17, 6.4), facecolor="#0f172a")
-        x = np.arange(len(subjects))
-        width = 0.38
-
-        # --- Chart 1: Peripapillary Dice ---
-        for idx, s_name in enumerate(subjects):
-            if is_val[idx]:
-                ax1.bar(x[idx] - width/2, unet_dices[idx], width, color="#f59e0b", alpha=0.95, edgecolor="white", linewidth=1.2, zorder=3)
-            else:
-                ax1.bar(x[idx] - width/2, unet_dices[idx], width, color="#10b981", alpha=0.92, edgecolor="white", linewidth=0.6, zorder=3)
-
-        for idx, s_name in enumerate(subjects):
-            b_dice = bad_dices[idx]
-            if b_dice == 0.0:
-                continue
-            if s_name in mirror_subjects:
-                ax1.bar(x[idx] + width/2, b_dice, width, color="#94a3b8", alpha=0.32, hatch="//", edgecolor="#f87171", linewidth=0.8, zorder=3)
-                ax1.text(x[idx] + width/2, b_dice + 0.02, "†", color="#f87171", fontsize=13, fontweight="bold", ha="center")
-            else:
-                ax1.bar(x[idx] + width/2, b_dice, width, color="#ef4444", alpha=0.88, edgecolor="white", linewidth=0.6, zorder=3)
-
-        for idx, s in enumerate(od_scans):
-            if s.is_validation:
-                y_pos = max(unet_dices[idx], bad_dices[idx]) + 0.05 if bad_dices[idx] < 0.95 else unet_dices[idx] + 0.04
-                ax1.annotate("Held-Out Val", (x[idx], y_pos),
-                             color="#f59e0b", fontweight="bold", ha="center", fontsize=8.5,
-                             bbox=dict(boxstyle="round,pad=0.25", fc="#1e293b", ec="#f59e0b", lw=1.2))
-
-        legend_elements1 = [
-            Patch(facecolor="#10b981", edgecolor="white", label="U-Net (Train Fit)"),
-            Patch(facecolor="#f59e0b", edgecolor="white", label="U-Net (Held-Out Val)"),
-            Patch(facecolor="#ef4444", edgecolor="white", label="Commercial (Clinician GT)"),
-            Patch(facecolor="#94a3b8", alpha=0.4, hatch="//", edgecolor="#f87171", label="Commercial (Mirror †)")
-        ]
-
-        ax1.set_title("Cohort Peripapillary Dice Score Comparison (OD)", color="white", fontsize=12.5, fontweight="bold", pad=28)
-        ax1.set_xticks(x)
-        xtick_labels_1 = ax1.set_xticklabels(subjects, rotation=42, fontsize=9.5)
-        for idx, s in enumerate(od_scans):
-            if s.is_validation:
-                xtick_labels_1[idx].set_color("#f59e0b")
-                xtick_labels_1[idx].set_fontweight("bold")
-            else:
-                xtick_labels_1[idx].set_color("#cbd5e1")
-
-        ax1.set_ylabel("Peripapillary Dice Score", color="#cbd5e1", fontsize=10.5)
-        ax1.set_ylim(0.0, 1.12)
-        ax1.grid(axis="y", color="#334155", linestyle="--", alpha=0.7)
-        ax1.legend(handles=legend_elements1, facecolor="#1e293b", edgecolor="#475569", labelcolor="white", fontsize=8.5,
-                   loc="upper center", bbox_to_anchor=(0.5, 1.07), ncol=4, frameon=True)
-        ax1.tick_params(colors="#cbd5e1")
-        for spine in ax1.spines.values():
-            spine.set_color("#475569")
-
-        # --- Chart 2: MABE & Cup IoU ---
-        train_mask = [not v for v in is_val]
-        val_mask = is_val
-
-        ax2.plot(x, unet_mabes, "-", color="#38bdf8", linewidth=2.2, alpha=0.85, zorder=2)
-        train_x = [x[i] for i in range(len(x)) if train_mask[i]]
-        train_mabes = [unet_mabes[i] for i in range(len(x)) if train_mask[i]]
-        ax2.scatter(train_x, train_mabes, color="#38bdf8", s=60, zorder=3, edgecolors="white", linewidth=0.8, label="Train NFL MABE")
-
-        val_x = [x[i] for i in range(len(x)) if val_mask[i]]
-        val_mabes = [unet_mabes[i] for i in range(len(x)) if val_mask[i]]
-        ax2.scatter(val_x, val_mabes, color="#f59e0b", s=120, zorder=5, edgecolors="white", linewidth=1.5, marker="D", label="Val MABE (Held-Out)")
-
-        ax2.set_ylabel("Mean Absolute Boundary Error (µm)", color="#38bdf8", fontsize=10.5)
-        ax2.set_xticks(x)
-        xtick_labels_2 = ax2.set_xticklabels(subjects, rotation=42, fontsize=9.5)
-        for idx, s in enumerate(od_scans):
-            if s.is_validation:
-                xtick_labels_2[idx].set_color("#f59e0b")
-                xtick_labels_2[idx].set_fontweight("bold")
-            else:
-                xtick_labels_2[idx].set_color("#cbd5e1")
-
-        ax2.tick_params(axis="y", labelcolor="#38bdf8", colors="#cbd5e1")
-        ax2.tick_params(axis="x", colors="#cbd5e1")
-        ax2.grid(color="#334155", linestyle="--", alpha=0.7)
-        ax2.set_title("U-Net Boundary Accuracy & BMO Cup IoU (OD)", color="white", fontsize=12.5, fontweight="bold", pad=28)
-        ax2.set_ylim(0, 108)
-        ax2.axhspan(6.5, 9.5, color="#38bdf8", alpha=0.12, label="Train Benchmark (7-9 µm)")
-
-        ax2_twin = ax2.twinx()
-        ax2_twin.plot(x, unet_cup_ious, "--", color="#c084fc", linewidth=2.0, alpha=0.85, zorder=2)
-        train_cup_ious = [unet_cup_ious[i] for i in range(len(x)) if train_mask[i]]
-        ax2_twin.scatter(train_x, train_cup_ious, color="#c084fc", s=55, marker="s", zorder=3, edgecolors="white", linewidth=0.8, label="Train Cup IoU")
-
-        val_cup_ious = [unet_cup_ious[i] for i in range(len(x)) if val_mask[i]]
-        ax2_twin.scatter(val_x, val_cup_ious, color="#f59e0b", s=100, marker="s", zorder=5, edgecolors="white", linewidth=1.5, label="Val Cup IoU (Held-Out)")
-
-        ax2_twin.set_ylabel("Cup Cavity IoU", color="#c084fc", fontsize=10.5)
-        ax2_twin.tick_params(axis="y", labelcolor="#c084fc", colors="#cbd5e1")
-        ax2_twin.set_ylim(0.65, 1.03)
-
-        if "BEH0314" in subjects:
-            idx_314 = subjects.index("BEH0314")
-            ax2.annotate(f"Held-Out Val\n{unet_mabes[idx_314]:.1f} µm",
-                         (idx_314, unet_mabes[idx_314]),
-                         xytext=(idx_314, unet_mabes[idx_314] + 13),
-                         color="#f59e0b", fontsize=8.2, fontweight="bold", ha="center",
-                         arrowprops=dict(arrowstyle="->", color="#f59e0b", lw=1.2),
-                         bbox=dict(boxstyle="round,pad=0.25", fc="#1e293b", ec="#f59e0b", lw=1.0))
-
-        if "BEH0335" in subjects:
-            idx_335 = subjects.index("BEH0335")
-            ax2.annotate(f"Held-Out Val (Tilt)\n{unet_mabes[idx_335]:.1f} µm",
-                         (idx_335, unet_mabes[idx_335]),
-                         xytext=(idx_335, unet_mabes[idx_335] + 12),
-                         color="#f59e0b", fontsize=8.2, fontweight="bold", ha="center",
-                         arrowprops=dict(arrowstyle="->", color="#f59e0b", lw=1.2),
-                         bbox=dict(boxstyle="round,pad=0.25", fc="#1e293b", ec="#f59e0b", lw=1.0))
-
-        legend_elements2 = [
-            Line2D([0], [0], color="#38bdf8", marker="o", markersize=6, label="Train MABE (µm)"),
-            Line2D([0], [0], color="#f59e0b", marker="D", markersize=7, linestyle="None", label="Val MABE (Orange)"),
-            Line2D([0], [0], color="#c084fc", marker="s", markersize=6, linestyle="--", label="Train Cup IoU"),
-            Line2D([0], [0], color="#f59e0b", marker="s", markersize=7, linestyle="None", label="Val Cup IoU (Orange)"),
-        ]
-        ax2.legend(handles=legend_elements2, facecolor="#1e293b", edgecolor="#475569", labelcolor="white",
-                   loc="upper center", bbox_to_anchor=(0.5, 1.07), ncol=4, fontsize=7.5, frameon=True)
-
-        for spine in ax2.spines.values():
-            spine.set_color("#475569")
-        for spine in ax2_twin.spines.values():
-            spine.set_color("#475569")
-
-        fig.text(0.5, 0.015, "Orange color, text badges, and markers indicate held-out validation subjects (BEH0314, BEH0335) unseen during training.  † Unedited machine mirror.",
-                 color="#cbd5e1", fontsize=8.5, ha="center", style="italic")
-
-        out_path = os.path.join(self.output_dir, "cohort_summary_chart.png")
-        plt.tight_layout(rect=[0, 0.035, 1, 0.98])
-        plt.savefig(out_path, dpi=200, facecolor="#0f172a", bbox_inches="tight")
-        plt.close(fig)
-        return out_path
-
-    def render_statistical_raincloud_chart(self, scan_results: List[ScanEvaluationResult]) -> str:
+    def render_statistical_raincloud_chart(self, scan_results: List[ScanEvaluationResult], theme: str = "dark") -> str:
         """Renders publication Figure 1: Raincloud distributions."""
         from build_cohort_report import render_statistical_raincloud_chart
-        out_path = os.path.join(self.output_dir, "cohort_raincloud_distributions.png")
-        return render_statistical_raincloud_chart([r.to_dict() for r in scan_results], out_path)
+        suffix = "_light.png" if theme == "light" else ".png"
+        out_path = os.path.join(self.output_dir, f"cohort_raincloud_distributions{suffix}")
+        return render_statistical_raincloud_chart([r.to_dict() for r in scan_results], out_path, theme=theme)
 
-    def render_complete_scan_forest_chart(self, scan_results: List[ScanEvaluationResult]) -> str:
+    def render_complete_scan_forest_chart(self, scan_results: List[ScanEvaluationResult], theme: str = "dark") -> str:
         """Renders publication Figure 2: Complete 46-scan ranked forest chart."""
         from build_cohort_report import render_complete_scan_forest_chart
-        out_path = os.path.join(self.output_dir, "cohort_per_scan_forest_plot.png")
-        return render_complete_scan_forest_chart([r.to_dict() for r in scan_results], out_path)
+        suffix = "_light.png" if theme == "light" else ".png"
+        out_path = os.path.join(self.output_dir, f"cohort_per_scan_forest_plot{suffix}")
+        return render_complete_scan_forest_chart([r.to_dict() for r in scan_results], out_path, theme=theme)
 
-    def render_baseline_comparison_chart(self, scan_results: List[ScanEvaluationResult]) -> Optional[str]:
+    def render_baseline_comparison_chart(self, scan_results: List[ScanEvaluationResult], theme: str = "dark") -> Optional[str]:
         """Renders publication Figure 3: Baseline vs U-Net comparative delta."""
         from build_cohort_report import render_baseline_comparison_chart
-        out_path = os.path.join(self.output_dir, "baseline_vs_unet_head_to_head.png")
-        return render_baseline_comparison_chart([r.to_dict() for r in scan_results], out_path)
+        suffix = "_light.png" if theme == "light" else ".png"
+        out_path = os.path.join(self.output_dir, f"baseline_vs_unet_head_to_head{suffix}")
+        return render_baseline_comparison_chart([r.to_dict() for r in scan_results], out_path, theme=theme)
 
 
 # ============================================================================
@@ -967,17 +828,20 @@ class CohortEvaluatorPipeline:
                         'filename': dd_file
                     })
 
-        # 4. Generate Cohort Publication Charts
-        print("\n[Cohort Pipeline] Generating Publication Cohort Summary Charts...")
-        chart_path = self.visualizer.render_cohort_summary_chart(cohort_results)
-        print(f"[Cohort Pipeline] Summary chart saved to: {chart_path}")
-        raincloud_path = self.visualizer.render_statistical_raincloud_chart(cohort_results)
-        print(f"[Cohort Pipeline] Raincloud quad-plot saved to: {raincloud_path}")
-        forest_path = self.visualizer.render_complete_scan_forest_chart(cohort_results)
-        print(f"[Cohort Pipeline] Complete scan forest plot saved to: {forest_path}")
-        baseline_path = self.visualizer.render_baseline_comparison_chart(cohort_results)
-        if baseline_path:
-            print(f"[Cohort Pipeline] Baseline comparison chart saved to: {baseline_path}")
+        # 4. Generate Cohort Publication Charts (Dual-Theme: Dark & Light)
+        print("\n[Cohort Pipeline] Generating Publication Cohort Summary Charts (Dual-Theme)...")
+        # Dark Theme (default for .md)
+        self.visualizer.render_cohort_summary_chart(cohort_results, theme="dark")
+        self.visualizer.render_statistical_raincloud_chart(cohort_results, theme="dark")
+        self.visualizer.render_complete_scan_forest_chart(cohort_results, theme="dark")
+        self.visualizer.render_baseline_comparison_chart(cohort_results, theme="dark")
+
+        # Light Theme (publication white for PDF)
+        self.visualizer.render_cohort_summary_chart(cohort_results, theme="light")
+        self.visualizer.render_statistical_raincloud_chart(cohort_results, theme="light")
+        self.visualizer.render_complete_scan_forest_chart(cohort_results, theme="light")
+        self.visualizer.render_baseline_comparison_chart(cohort_results, theme="light")
+        print("[Cohort Pipeline] Summary charts saved in both dark (.png) and light (_light.png) themes.")
 
         # 5. Export JSON Manifest
         json_path = os.path.join(self.assets_dir, "cohort_evaluation_metrics.json")

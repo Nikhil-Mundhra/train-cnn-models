@@ -30,6 +30,59 @@ from matplotlib.patches import Patch
 import numpy as np
 
 
+
+def get_theme_palette(theme: str = "light") -> Dict[str, Any]:
+    """Provides high-contrast color palettes for light (publication PDF) and dark (IDE/markdown) rendering."""
+    if theme == "light":
+        return {
+            "fig_face": "#ffffff",
+            "ax_face": "#ffffff",
+            "ax_face_alt": "#f8fafc",
+            "text": "#0f172a",
+            "subtext": "#475569",
+            "grid": "#e2e8f0",
+            "spine": "#cbd5e1",
+            "tick": "#334155",
+            "badge_fc": "#ffffff",
+            "badge_ec": "#cbd5e1",
+            "threshold_line": "#dc2626",
+            "threshold_text": "#dc2626",
+            "val_color": "#d97706",
+            "bench_od_color": "#0284c7",
+            "bench_os_color": "#4f46e5",
+            "unet_color": "#059669",
+            "bad_color": "#dc2626",
+            "cup_color": "#7c3aed",
+            "legend_fc": "#ffffff",
+            "legend_ec": "#cbd5e1",
+            "legend_text": "#0f172a",
+        }
+    else:
+        return {
+            "fig_face": "#0f172a",
+            "ax_face": "#1e293b",
+            "ax_face_alt": "#1e293b",
+            "text": "#ffffff",
+            "subtext": "#cbd5e1",
+            "grid": "#334155",
+            "spine": "#475569",
+            "tick": "#cbd5e1",
+            "badge_fc": "#0f172a",
+            "badge_ec": "#475569",
+            "threshold_line": "#f87171",
+            "threshold_text": "#f87171",
+            "val_color": "#f59e0b",
+            "bench_od_color": "#06b6d4",
+            "bench_os_color": "#6366f1",
+            "unet_color": "#10b981",
+            "bad_color": "#ef4444",
+            "cup_color": "#a855f7",
+            "legend_fc": "#0f172a",
+            "legend_ec": "#475569",
+            "legend_text": "#ffffff",
+        }
+
+
 def normalize_markdown_lists(text: str) -> str:
     """
     Automated Defensive List Normalization:
@@ -55,21 +108,22 @@ def normalize_markdown_lists(text: str) -> str:
     return "\n".join(normalized)
 
 
-def render_statistical_raincloud_chart(scans: List[Dict[str, Any]], out_path: str) -> str:
+def render_statistical_raincloud_chart(scans: List[Dict[str, Any]], out_path: str, theme: str = "light") -> str:
     """
     Figure 1: Multi-Metric Clinical Raincloud & Jittered Box-Scatter Quad-Plot.
-    Replaces static summary tables while preserving complete distributional fidelity.
+    Supports clean publication white theme (for PDFs) and dark theme.
     """
+    pal = get_theme_palette(theme)
     bench_all = [s for s in scans if not s.get('is_validation', False)]
     bench_od = [s for s in bench_all if s['eye'] == 'OD']
     bench_os = [s for s in bench_all if s['eye'] == 'OS']
     val_scans = [s for s in scans if s.get('is_validation', False)]
 
     groups = [
-        ("Benchmark (All, N=40)", bench_all, "#10b981"),
-        ("Benchmark OD (N=20)", bench_od, "#06b6d4"),
-        ("Benchmark OS (N=20)", bench_os, "#6366f1"),
-        ("Validation (Held-Out, N=6)", val_scans, "#f59e0b")
+        ("Benchmark (All, N=40)", bench_all, pal["unet_color"]),
+        ("Benchmark OD (N=20)", bench_od, pal["bench_od_color"]),
+        ("Benchmark OS (N=20)", bench_os, pal["bench_os_color"]),
+        ("Validation (Held-Out, N=6)", val_scans, pal["val_color"])
     ]
 
     metrics = [
@@ -79,12 +133,12 @@ def render_statistical_raincloud_chart(scans: List[Dict[str, Any]], out_path: st
         ("Optic Cup Cavity IoU", "unet_cup_iou", "Cup IoU", (0.50, 1.05), 0.90, "High Accuracy (>0.90)")
     ]
 
-    fig, axes = plt.subplots(2, 2, figsize=(16, 12), facecolor="#0f172a")
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12), facecolor=pal["fig_face"])
     axes = axes.flatten()
 
     for ax_idx, (m_title, m_key, y_label, y_lim, thresh_val, thresh_label) in enumerate(metrics):
         ax = axes[ax_idx]
-        ax.set_facecolor("#1e293b")
+        ax.set_facecolor(pal["ax_face"])
         x_positions = np.arange(len(groups))
 
         for g_idx, (g_name, g_scans, g_color) in enumerate(groups):
@@ -96,10 +150,10 @@ def render_statistical_raincloud_chart(scans: List[Dict[str, Any]], out_path: st
             ax.boxplot(
                 [vals], positions=[g_idx], widths=0.45,
                 patch_artist=True, showmeans=False, showfliers=False,
-                boxprops=dict(facecolor=g_color, color="white", alpha=0.45, linewidth=1.2),
-                whiskerprops=dict(color="white", linewidth=1.2),
-                capprops=dict(color="white", linewidth=1.2),
-                medianprops=dict(color="#f8fafc", linewidth=2.5)
+                boxprops=dict(facecolor=g_color, color=g_color if theme == "light" else "white", alpha=0.35, linewidth=1.4),
+                whiskerprops=dict(color=pal["subtext"], linewidth=1.2),
+                capprops=dict(color=pal["subtext"], linewidth=1.2),
+                medianprops=dict(color=pal["text"], linewidth=2.5)
             )
 
             # Jittered scatter dots
@@ -107,8 +161,8 @@ def render_statistical_raincloud_chart(scans: List[Dict[str, Any]], out_path: st
             jitter = np.random.uniform(-0.14, 0.14, size=len(vals))
             ax.scatter(
                 g_idx + jitter, vals,
-                color=g_color, edgecolors="white", linewidths=0.8,
-                s=65 if len(vals) < 15 else 45, alpha=0.92, zorder=4
+                color=g_color, edgecolors="white" if theme == "dark" else pal["ax_face"],
+                linewidths=0.8, s=65 if len(vals) < 15 else 45, alpha=0.92, zorder=4
             )
 
             # Stats text badge
@@ -116,7 +170,7 @@ def render_statistical_raincloud_chart(scans: List[Dict[str, Any]], out_path: st
             std_val = np.std(vals)
             med_val = np.median(vals)
             
-            if m_key == "unet_dice" or m_key == "unet_cup_iou":
+            if m_key in ("unet_dice", "unet_cup_iou"):
                 stat_str = f"μ: {mean_val:.3f}±{std_val:.3f}\nMed: {med_val:.3f}"
             else:
                 stat_str = f"μ: {mean_val:.1f}±{std_val:.1f}µm\nMed: {med_val:.1f}µm"
@@ -124,44 +178,45 @@ def render_statistical_raincloud_chart(scans: List[Dict[str, Any]], out_path: st
             y_txt = y_lim[1] - (y_lim[1] - y_lim[0]) * 0.11
             ax.text(
                 g_idx, y_txt, stat_str,
-                color="white", fontsize=8.5, fontweight="bold", ha="center", va="top",
-                bbox=dict(boxstyle="round,pad=0.3", fc="#0f172a", ec=g_color, lw=1.2, alpha=0.85)
+                color=pal["text"], fontsize=8.5, fontweight="bold", ha="center", va="top",
+                bbox=dict(boxstyle="round,pad=0.3", fc=pal["badge_fc"], ec=g_color, lw=1.3, alpha=0.92)
             )
 
         if thresh_val is not None:
-            ax.axhline(thresh_val, color="#f87171", linestyle="--", linewidth=1.5, alpha=0.85, zorder=2)
-            ax.text(len(groups) - 0.55, thresh_val, f" {thresh_label}", color="#f87171", fontsize=9, fontweight="bold", va="bottom", ha="right")
+            ax.axhline(thresh_val, color=pal["threshold_line"], linestyle="--", linewidth=1.5, alpha=0.85, zorder=2)
+            ax.text(len(groups) - 0.55, thresh_val, f" {thresh_label}", color=pal["threshold_text"], fontsize=9, fontweight="bold", va="bottom", ha="right")
 
-        ax.set_title(m_title, color="white", fontsize=13, fontweight="bold", pad=12)
-        ax.set_ylabel(y_label, color="#cbd5e1", fontsize=11, fontweight="bold")
+        ax.set_title(m_title, color=pal["text"], fontsize=13, fontweight="bold", pad=12)
+        ax.set_ylabel(y_label, color=pal["subtext"], fontsize=11, fontweight="bold")
         ax.set_xticks(x_positions)
-        ax.set_xticklabels([g[0] for g in groups], color="#cbd5e1", fontsize=9.5, fontweight="bold", rotation=12)
+        ax.set_xticklabels([g[0] for g in groups], color=pal["text"], fontsize=9.5, fontweight="bold", rotation=12)
         ax.set_ylim(y_lim)
-        ax.grid(axis="y", color="#334155", linestyle="--", alpha=0.6)
-        ax.tick_params(colors="#cbd5e1")
+        ax.grid(axis="y", color=pal["grid"], linestyle="--", alpha=0.7)
+        ax.tick_params(colors=pal["tick"])
         for spine in ax.spines.values():
-            spine.set_color("#475569")
+            spine.set_color(pal["spine"])
 
-    plt.suptitle("Clinical Cohort Statistical Distribution: Multi-Arm Raincloud & Box-Scatter Profiles", color="white", fontsize=16, fontweight="bold", y=0.99)
+    plt.suptitle("Clinical Cohort Statistical Distribution: Multi-Arm Raincloud & Box-Scatter Profiles", color=pal["text"], fontsize=16, fontweight="bold", y=0.99)
     plt.tight_layout(rect=[0, 0, 1, 0.97])
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
-    plt.savefig(out_path, dpi=200, facecolor="#0f172a", bbox_inches="tight")
+    plt.savefig(out_path, dpi=200, facecolor=pal["fig_face"], bbox_inches="tight")
     plt.close(fig)
     return out_path
 
 
-def render_complete_scan_forest_chart(scans: List[Dict[str, Any]], out_path: str) -> str:
+def render_complete_scan_forest_chart(scans: List[Dict[str, Any]], out_path: str, theme: str = "light") -> str:
     """
     Figure 2: Complete 46-Scan Ranked Forest / Lollipop Plot.
-    Renders every individual acquisition with zero loss of detail, sorted by MABE.
+    Supports clean publication white theme (for PDFs) and dark theme.
     """
+    pal = get_theme_palette(theme)
     sorted_scans = sorted(scans, key=lambda s: s['unet_mabe'])
     n_scans = len(sorted_scans)
     y_pos = np.arange(n_scans)
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 16), facecolor="#0f172a", gridspec_kw={"width_ratios": [1.25, 1.0]})
-    ax1.set_facecolor("#1e293b")
-    ax2.set_facecolor("#1e293b")
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 16), facecolor=pal["fig_face"], gridspec_kw={"width_ratios": [1.25, 1.0]})
+    ax1.set_facecolor(pal["ax_face"])
+    ax2.set_facecolor(pal["ax_face"])
 
     labels = []
     label_colors = []
@@ -169,14 +224,14 @@ def render_complete_scan_forest_chart(scans: List[Dict[str, Any]], out_path: str
         tag = f"{s['subject']} ({s['eye']})"
         if s.get('is_validation', False):
             tag += " [VAL]"
-            label_colors.append("#f59e0b")
+            label_colors.append(pal["val_color"])
         elif s.get('is_mirror', False):
             tag += " [MIRROR]"
-            label_colors.append("#94a3b8")
+            label_colors.append("#64748b" if theme == "light" else "#94a3b8")
         elif s['eye'] == 'OD':
-            label_colors.append("#38bdf8")
+            label_colors.append(pal["bench_od_color"])
         else:
-            label_colors.append("#a5b4fc")
+            label_colors.append(pal["bench_os_color"])
         labels.append(tag)
 
     mabes = [s['unet_mabe'] for s in sorted_scans]
@@ -187,67 +242,68 @@ def render_complete_scan_forest_chart(scans: List[Dict[str, Any]], out_path: str
     for i in range(n_scans):
         is_v = sorted_scans[i].get('is_validation', False)
         eye = sorted_scans[i]['eye']
-        color = "#f59e0b" if is_v else ("#10b981" if eye == "OD" else "#6366f1")
+        color = pal["val_color"] if is_v else (pal["unet_color"] if eye == "OD" else pal["bench_os_color"])
         marker = "D" if is_v else ("o" if eye == "OD" else "s")
         size = 85 if is_v else 65
 
-        ax1.hlines(y_pos[i], 0, mabes[i], color=color, alpha=0.7, linewidth=1.5)
-        ax1.scatter(mabes[i], y_pos[i], color=color, s=size, marker=marker, edgecolors="white", linewidths=1.0, zorder=4)
-        ax1.text(mabes[i] + 3.5, y_pos[i], f"{mabes[i]:.1f} µm", color="white", fontsize=8.5, va="center", fontweight="bold")
+        ax1.hlines(y_pos[i], 0, mabes[i], color=color, alpha=0.6, linewidth=1.5)
+        ax1.scatter(mabes[i], y_pos[i], color=color, s=size, marker=marker, edgecolors="white" if theme == "dark" else pal["ax_face"], linewidths=1.0, zorder=4)
+        ax1.text(mabes[i] + 3.5, y_pos[i], f"{mabes[i]:.1f} µm", color=pal["text"], fontsize=8.5, va="center", fontweight="bold")
 
-    ax1.axvline(5.0, color="#f87171", linestyle="--", linewidth=1.8, alpha=0.9, zorder=3, label="Acceptance Limit (<5 µm)")
-    ax1.set_title("Peripapillary MABE (Sorted Best to Worst)", color="white", fontsize=14, fontweight="bold", pad=12)
-    ax1.set_xlabel("Mean Absolute Boundary Error (µm)", color="#cbd5e1", fontsize=11, fontweight="bold")
+    ax1.axvline(5.0, color=pal["threshold_line"], linestyle="--", linewidth=1.8, alpha=0.9, zorder=3, label="Acceptance Limit (<5 µm)")
+    ax1.set_title("Peripapillary MABE (Sorted Best to Worst)", color=pal["text"], fontsize=14, fontweight="bold", pad=12)
+    ax1.set_xlabel("Mean Absolute Boundary Error (µm)", color=pal["subtext"], fontsize=11, fontweight="bold")
     ax1.set_yticks(y_pos)
     ytick_objs = ax1.set_yticklabels(labels, fontsize=9.5, fontweight="bold")
     for idx, c in enumerate(label_colors):
         ytick_objs[idx].set_color(c)
     ax1.set_xlim(0, max(mabes) * 1.15)
     ax1.set_ylim(-0.8, n_scans - 0.2)
-    ax1.grid(axis="x", color="#334155", linestyle="--", alpha=0.7)
-    ax1.legend(facecolor="#0f172a", edgecolor="#475569", labelcolor="white", loc="lower right", fontsize=10)
-    ax1.tick_params(colors="#cbd5e1")
+    ax1.grid(axis="x", color=pal["grid"], linestyle="--", alpha=0.7)
+    ax1.legend(facecolor=pal["legend_fc"], edgecolor=pal["legend_ec"], labelcolor=pal["legend_text"], loc="lower right", fontsize=10)
+    ax1.tick_params(colors=pal["tick"])
     for spine in ax1.spines.values():
-        spine.set_color("#475569")
+        spine.set_color(pal["spine"])
 
     # --- Right: Dice & Cup IoU ---
     for i in range(n_scans):
-        ax2.hlines(y_pos[i], min(dices[i], cups[i]), max(dices[i], cups[i]), color="#94a3b8", alpha=0.4, linewidth=1.2)
-        ax2.scatter(dices[i], y_pos[i], color="#06b6d4", s=60, marker="o", edgecolors="white", linewidths=0.8, zorder=4)
-        ax2.scatter(cups[i], y_pos[i], color="#c084fc", s=65, marker="d", edgecolors="white", linewidths=0.8, zorder=4)
+        ax2.hlines(y_pos[i], min(dices[i], cups[i]), max(dices[i], cups[i]), color=pal["spine"], alpha=0.5, linewidth=1.2)
+        ax2.scatter(dices[i], y_pos[i], color=pal["bench_od_color"], s=60, marker="o", edgecolors="white" if theme == "dark" else pal["ax_face"], linewidths=0.8, zorder=4)
+        ax2.scatter(cups[i], y_pos[i], color=pal["cup_color"], s=65, marker="d", edgecolors="white" if theme == "dark" else pal["ax_face"], linewidths=0.8, zorder=4)
 
     custom_legend = [
-        Line2D([0], [0], marker='o', color='w', markerfacecolor='#06b6d4', markersize=9, label='RNFL Dice Overlap'),
-        Line2D([0], [0], marker='d', color='w', markerfacecolor='#c084fc', markersize=9, label='Optic Cup IoU'),
-        Line2D([0], [0], color='#f59e0b', lw=3, label='Held-Out Validation'),
-        Line2D([0], [0], color='#10b981', lw=3, label='Benchmark OD'),
-        Line2D([0], [0], color='#6366f1', lw=3, label='Benchmark OS')
+        Line2D([0], [0], marker='o', color='w', markerfacecolor=pal["bench_od_color"], markersize=9, label='RNFL Dice Overlap'),
+        Line2D([0], [0], marker='d', color='w', markerfacecolor=pal["cup_color"], markersize=9, label='Optic Cup IoU'),
+        Line2D([0], [0], color=pal["val_color"], lw=3, label='Held-Out Validation'),
+        Line2D([0], [0], color=pal["unet_color"], lw=3, label='Benchmark OD'),
+        Line2D([0], [0], color=pal["bench_os_color"], lw=3, label='Benchmark OS')
     ]
-    ax2.set_title("Volumetric Overlap (Dice) & Cup Termination (IoU)", color="white", fontsize=14, fontweight="bold", pad=12)
-    ax2.set_xlabel("Score (0.0 to 1.0)", color="#cbd5e1", fontsize=11, fontweight="bold")
+    ax2.set_title("Volumetric Overlap (Dice) & Cup Termination (IoU)", color=pal["text"], fontsize=14, fontweight="bold", pad=12)
+    ax2.set_xlabel("Score (0.0 to 1.0)", color=pal["subtext"], fontsize=11, fontweight="bold")
     ax2.set_yticks(y_pos)
     ax2.set_yticklabels([])
     ax2.set_xlim(0.48, 1.02)
     ax2.set_ylim(-0.8, n_scans - 0.2)
-    ax2.grid(axis="x", color="#334155", linestyle="--", alpha=0.7)
-    ax2.legend(handles=custom_legend, facecolor="#0f172a", edgecolor="#475569", labelcolor="white", loc="lower left", fontsize=9.5)
-    ax2.tick_params(colors="#cbd5e1")
+    ax2.grid(axis="x", color=pal["grid"], linestyle="--", alpha=0.7)
+    ax2.legend(handles=custom_legend, facecolor=pal["legend_fc"], edgecolor=pal["legend_ec"], labelcolor=pal["legend_text"], loc="lower left", fontsize=9.5)
+    ax2.tick_params(colors=pal["tick"])
     for spine in ax2.spines.values():
-        spine.set_color("#475569")
+        spine.set_color(pal["spine"])
 
-    plt.suptitle("Complete 46-Scan Ranked Clinical Cohort Forest Chart (Zero Loss of Detail)", color="white", fontsize=16, fontweight="bold", y=0.99)
+    plt.suptitle("Complete 46-Scan Ranked Clinical Cohort Forest Chart (Zero Loss of Detail)", color=pal["text"], fontsize=16, fontweight="bold", y=0.99)
     plt.tight_layout(rect=[0, 0, 1, 0.98])
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
-    plt.savefig(out_path, dpi=200, facecolor="#0f172a", bbox_inches="tight")
+    plt.savefig(out_path, dpi=200, facecolor=pal["fig_face"], bbox_inches="tight")
     plt.close(fig)
     return out_path
 
 
-def render_baseline_comparison_chart(scans: List[Dict[str, Any]], out_path: str) -> Optional[str]:
+def render_baseline_comparison_chart(scans: List[Dict[str, Any]], out_path: str, theme: str = "light") -> Optional[str]:
     """
     Figure 3: Head-to-Head Comparative Delta: U-Net vs Commercial Baseline.
-    Renders paired dumbbell plots for all subjects with dual annotations.
+    Supports clean publication white theme (for PDFs) and dark theme.
     """
+    pal = get_theme_palette(theme)
     bad_scans = [s for s in scans if s.get('bad_dice') is not None]
     if not bad_scans:
         return None
@@ -257,9 +313,9 @@ def render_baseline_comparison_chart(scans: List[Dict[str, Any]], out_path: str)
     y_pos = np.arange(n)
     labels = [f"{s['subject']} ({s['eye']})" for s in bad_scans]
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7.5), facecolor="#0f172a")
-    ax1.set_facecolor("#1e293b")
-    ax2.set_facecolor("#1e293b")
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7.5), facecolor=pal["fig_face"])
+    ax1.set_facecolor(pal["ax_face"])
+    ax2.set_facecolor(pal["ax_face"])
 
     u_dices = [s['unet_dice'] for s in bad_scans]
     b_dices = [s['bad_dice'] for s in bad_scans]
@@ -269,54 +325,178 @@ def render_baseline_comparison_chart(scans: List[Dict[str, Any]], out_path: str)
     # --- Left: Dice Paired Dumbbell ---
     for i in range(n):
         diff = u_dices[i] - b_dices[i]
-        line_color = "#10b981" if diff >= -0.05 else "#ef4444"
-        ax1.hlines(y_pos[i], b_dices[i], u_dices[i], color=line_color, alpha=0.8, linewidth=2.0)
-        ax1.scatter(b_dices[i], y_pos[i], color="#ef4444", s=75, marker="o", edgecolors="white", linewidths=0.9, zorder=3)
-        ax1.scatter(u_dices[i], y_pos[i], color="#10b981", s=85, marker="s", edgecolors="white", linewidths=0.9, zorder=4)
+        line_color = pal["unet_color"] if diff >= -0.05 else pal["bad_color"]
+        ax1.hlines(y_pos[i], b_dices[i], u_dices[i], color=line_color, alpha=0.75, linewidth=2.0)
+        ax1.scatter(b_dices[i], y_pos[i], color=pal["bad_color"], s=75, marker="o", edgecolors="white" if theme == "dark" else pal["ax_face"], linewidths=0.9, zorder=3)
+        ax1.scatter(u_dices[i], y_pos[i], color=pal["unet_color"], s=85, marker="s", edgecolors="white" if theme == "dark" else pal["ax_face"], linewidths=0.9, zorder=4)
 
     leg1 = [
-        Line2D([0], [0], marker='o', color='w', markerfacecolor='#ef4444', markersize=9, label='Commercial Baseline'),
-        Line2D([0], [0], marker='s', color='w', markerfacecolor='#10b981', markersize=9, label='Volumetric U-Net (Bi-Planar)')
+        Line2D([0], [0], marker='o', color='w', markerfacecolor=pal["bad_color"], markersize=9, label='Commercial Baseline'),
+        Line2D([0], [0], marker='s', color='w', markerfacecolor=pal["unet_color"], markersize=9, label='Volumetric U-Net (Bi-Planar)')
     ]
-    ax1.set_title("RNFL Dice Agreement: U-Net vs Commercial Baseline", color="white", fontsize=13, fontweight="bold", pad=12)
-    ax1.set_xlabel("Peripapillary Dice Overlap", color="#cbd5e1", fontsize=10.5, fontweight="bold")
+    ax1.set_title("RNFL Dice Agreement: U-Net vs Commercial Baseline", color=pal["text"], fontsize=13, fontweight="bold", pad=12)
+    ax1.set_xlabel("Peripapillary Dice Overlap", color=pal["subtext"], fontsize=10.5, fontweight="bold")
     ax1.set_yticks(y_pos)
-    ax1.set_yticklabels(labels, color="#cbd5e1", fontsize=9.5, fontweight="bold")
+    ax1.set_yticklabels(labels, color=pal["text"], fontsize=9.5, fontweight="bold")
     ax1.set_xlim(0.55, 1.03)
-    ax1.grid(axis="x", color="#334155", linestyle="--", alpha=0.7)
-    ax1.legend(handles=leg1, facecolor="#0f172a", edgecolor="#475569", labelcolor="white", loc="lower right", fontsize=9.5)
-    ax1.tick_params(colors="#cbd5e1")
+    ax1.grid(axis="x", color=pal["grid"], linestyle="--", alpha=0.7)
+    ax1.legend(handles=leg1, facecolor=pal["legend_fc"], edgecolor=pal["legend_ec"], labelcolor=pal["legend_text"], loc="lower right", fontsize=9.5)
+    ax1.tick_params(colors=pal["tick"])
     for spine in ax1.spines.values():
-        spine.set_color("#475569")
+        spine.set_color(pal["spine"])
 
     # --- Right: Cup IoU Paired Dumbbell ---
     for i in range(n):
         if b_cups[i] > 0.0:
             diff_cup = u_cups[i] - b_cups[i]
-            line_color = "#10b981" if diff_cup >= 0 else "#ef4444"
-            ax2.hlines(y_pos[i], b_cups[i], u_cups[i], color=line_color, alpha=0.8, linewidth=2.0)
-            ax2.scatter(b_cups[i], y_pos[i], color="#ef4444", s=75, marker="o", edgecolors="white", linewidths=0.9, zorder=3)
-        ax2.scatter(u_cups[i], y_pos[i], color="#a855f7", s=85, marker="D", edgecolors="white", linewidths=0.9, zorder=4)
+            line_color = pal["unet_color"] if diff_cup >= 0 else pal["bad_color"]
+            ax2.hlines(y_pos[i], b_cups[i], u_cups[i], color=line_color, alpha=0.75, linewidth=2.0)
+            ax2.scatter(b_cups[i], y_pos[i], color=pal["bad_color"], s=75, marker="o", edgecolors="white" if theme == "dark" else pal["ax_face"], linewidths=0.9, zorder=3)
+        ax2.scatter(u_cups[i], y_pos[i], color=pal["cup_color"], s=85, marker="D", edgecolors="white" if theme == "dark" else pal["ax_face"], linewidths=0.9, zorder=4)
 
     leg2 = [
-        Line2D([0], [0], marker='o', color='w', markerfacecolor='#ef4444', markersize=9, label='Commercial Cup IoU'),
-        Line2D([0], [0], marker='D', color='w', markerfacecolor='#a855f7', markersize=9, label='U-Net Cup IoU (1D Regression)')
+        Line2D([0], [0], marker='o', color='w', markerfacecolor=pal["bad_color"], markersize=9, label='Commercial Cup IoU'),
+        Line2D([0], [0], marker='D', color='w', markerfacecolor=pal["cup_color"], markersize=9, label='U-Net Cup IoU (1D Regression)')
     ]
-    ax2.set_title("Optic Cup (BMO) Margin IoU Comparison", color="white", fontsize=13, fontweight="bold", pad=12)
-    ax2.set_xlabel("Cup Cavity IoU", color="#cbd5e1", fontsize=10.5, fontweight="bold")
+    ax2.set_title("Optic Cup (BMO) Margin IoU Comparison", color=pal["text"], fontsize=13, fontweight="bold", pad=12)
+    ax2.set_xlabel("Cup Cavity IoU", color=pal["subtext"], fontsize=10.5, fontweight="bold")
     ax2.set_yticks(y_pos)
     ax2.set_yticklabels([])
     ax2.set_xlim(0.50, 1.03)
-    ax2.grid(axis="x", color="#334155", linestyle="--", alpha=0.7)
-    ax2.legend(handles=leg2, facecolor="#0f172a", edgecolor="#475569", labelcolor="white", loc="lower right", fontsize=9.5)
-    ax2.tick_params(colors="#cbd5e1")
+    ax2.grid(axis="x", color=pal["grid"], linestyle="--", alpha=0.7)
+    ax2.legend(handles=leg2, facecolor=pal["legend_fc"], edgecolor=pal["legend_ec"], labelcolor=pal["legend_text"], loc="lower right", fontsize=9.5)
+    ax2.tick_params(colors=pal["tick"])
     for spine in ax2.spines.values():
-        spine.set_color("#475569")
+        spine.set_color(pal["spine"])
 
-    plt.suptitle("Head-to-Head Comparative Delta: Deep Learning Model vs Commercial Baseline", color="white", fontsize=15, fontweight="bold", y=0.98)
+    plt.suptitle("Head-to-Head Comparative Delta: Deep Learning Model vs Commercial Baseline", color=pal["text"], fontsize=15, fontweight="bold", y=0.98)
     plt.tight_layout(rect=[0, 0, 1, 0.95])
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
-    plt.savefig(out_path, dpi=200, facecolor="#0f172a", bbox_inches="tight")
+    plt.savefig(out_path, dpi=200, facecolor=pal["fig_face"], bbox_inches="tight")
+    plt.close(fig)
+    return out_path
+
+
+def render_cohort_summary_chart(scans: List[Dict[str, Any]], out_path: str, theme: str = "light") -> str:
+    """
+    Cohort Summary Chart (OD Dice, MABE & Cup IoU).
+    Supports clean publication white theme (for PDFs) and dark theme.
+    """
+    pal = get_theme_palette(theme)
+    od_scans = [s for s in scans if s.get('eye') == "OD"]
+    subjects = [s['subject'] for s in od_scans]
+    unet_dices = [s['unet_dice'] for s in od_scans]
+    bad_dices = [s.get('bad_dice', 0.0) if s.get('bad_dice') is not None else 0.0 for s in od_scans]
+    unet_mabes = [s['unet_mabe'] for s in od_scans]
+    unet_cup_ious = [s['unet_cup_iou'] for s in od_scans]
+    is_val = [s.get('is_validation', False) for s in od_scans]
+
+    mirror_subjects = {"BEH0181", "BEH0398", "BEH0410"}
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(17, 6.4), facecolor=pal["fig_face"])
+    x = np.arange(len(subjects))
+    width = 0.38
+
+    # --- Chart 1: Peripapillary Dice ---
+    for idx, s_name in enumerate(subjects):
+        if is_val[idx]:
+            ax1.bar(x[idx] - width/2, unet_dices[idx], width, color=pal["val_color"], alpha=0.95, edgecolor="white" if theme == "dark" else pal["ax_face"], linewidth=1.2, zorder=3)
+        else:
+            ax1.bar(x[idx] - width/2, unet_dices[idx], width, color=pal["unet_color"], alpha=0.92, edgecolor="white" if theme == "dark" else pal["ax_face"], linewidth=0.6, zorder=3)
+
+    for idx, s_name in enumerate(subjects):
+        b_dice = bad_dices[idx]
+        if b_dice == 0.0:
+            continue
+        if s_name in mirror_subjects:
+            ax1.bar(x[idx] + width/2, b_dice, width, color="#94a3b8", alpha=0.32, hatch="//", edgecolor=pal["bad_color"], linewidth=0.8, zorder=3)
+            ax1.text(x[idx] + width/2, b_dice + 0.02, "†", color=pal["bad_color"], fontsize=13, fontweight="bold", ha="center")
+        else:
+            ax1.bar(x[idx] + width/2, b_dice, width, color=pal["bad_color"], alpha=0.88, edgecolor="white" if theme == "dark" else pal["ax_face"], linewidth=0.6, zorder=3)
+
+    for idx, s in enumerate(od_scans):
+        if s.get('is_validation', False):
+            y_pos = max(unet_dices[idx], bad_dices[idx]) + 0.05 if bad_dices[idx] < 0.95 else unet_dices[idx] + 0.04
+            ax1.annotate("Held-Out Val", (x[idx], y_pos),
+                         color=pal["val_color"], fontweight="bold", ha="center", fontsize=8.5,
+                         bbox=dict(boxstyle="round,pad=0.25", fc=pal["badge_fc"], ec=pal["val_color"], lw=1.2))
+
+    legend_elements1 = [
+        Patch(facecolor=pal["unet_color"], edgecolor="none", label="U-Net (Train Fit)"),
+        Patch(facecolor=pal["val_color"], edgecolor="none", label="U-Net (Held-Out Val)"),
+        Patch(facecolor=pal["bad_color"], edgecolor="none", label="Commercial (Clinician GT)"),
+        Patch(facecolor="#94a3b8", alpha=0.4, hatch="//", edgecolor=pal["bad_color"], label="Commercial (Mirror †)")
+    ]
+
+    ax1.set_title("Cohort Peripapillary Dice Score Comparison (OD)", color=pal["text"], fontsize=12.5, fontweight="bold", pad=28)
+    ax1.set_xticks(x)
+    xtick_labels_1 = ax1.set_xticklabels(subjects, rotation=42, fontsize=9.5)
+    for idx, s in enumerate(od_scans):
+        if s.get('is_validation', False):
+            xtick_labels_1[idx].set_color(pal["val_color"])
+            xtick_labels_1[idx].set_fontweight("bold")
+        else:
+            xtick_labels_1[idx].set_color(pal["tick"])
+
+    ax1.set_ylabel("Peripapillary Dice Score", color=pal["subtext"], fontsize=10.5)
+    ax1.set_ylim(0.0, 1.12)
+    ax1.grid(axis="y", color=pal["grid"], linestyle="--", alpha=0.7)
+    ax1.legend(handles=legend_elements1, facecolor=pal["legend_fc"], edgecolor=pal["legend_ec"], labelcolor=pal["legend_text"], fontsize=8.5,
+               loc="upper center", bbox_to_anchor=(0.5, 1.07), ncol=4, frameon=True)
+    ax1.tick_params(colors=pal["tick"])
+    for spine in ax1.spines.values():
+        spine.set_color(pal["spine"])
+
+    # --- Chart 2: MABE & Cup IoU ---
+    train_mask = [not v for v in is_val]
+    val_mask = is_val
+
+    ax2.plot(x, unet_mabes, "-", color=pal["bench_od_color"], linewidth=2.2, alpha=0.85, zorder=2)
+    train_x = [x[i] for i in range(len(x)) if train_mask[i]]
+    train_mabes = [unet_mabes[i] for i in range(len(x)) if train_mask[i]]
+    ax2.scatter(train_x, train_mabes, color=pal["bench_od_color"], s=60, zorder=3, edgecolors="white" if theme == "dark" else pal["ax_face"], linewidth=0.8, label="Train NFL MABE")
+
+    val_x = [x[i] for i in range(len(x)) if val_mask[i]]
+    val_mabes = [unet_mabes[i] for i in range(len(x)) if val_mask[i]]
+    ax2.scatter(val_x, val_mabes, color=pal["val_color"], s=85, marker="D", zorder=4, edgecolors="white" if theme == "dark" else pal["ax_face"], linewidth=1.2, label="Held-Out Val MABE")
+
+    for i in val_x:
+        ax2.annotate(f"{unet_mabes[i]:.1f}µm", (x[i], unet_mabes[i] + 0.35),
+                     color=pal["val_color"], fontweight="bold", ha="center", fontsize=8.5,
+                     bbox=dict(boxstyle="round,pad=0.2", fc=pal["badge_fc"], ec=pal["val_color"], lw=1.2))
+
+    ax2.plot(x, unet_cup_ious, "--", color=pal["cup_color"], linewidth=1.8, alpha=0.85, zorder=2, label="Cup Cavity IoU")
+    ax2.scatter(x, unet_cup_ious, color=pal["cup_color"], s=45, marker="s", zorder=3, edgecolors="white" if theme == "dark" else pal["ax_face"], linewidth=0.6)
+
+    ax2.set_title("Boundary Adherence (MABE) & Cup Margin Detection (OD)", color=pal["text"], fontsize=12.5, fontweight="bold", pad=28)
+    ax2.set_xticks(x)
+    xtick_labels_2 = ax2.set_xticklabels(subjects, rotation=42, fontsize=9.5)
+    for idx, s in enumerate(od_scans):
+        if s.get('is_validation', False):
+            xtick_labels_2[idx].set_color(pal["val_color"])
+            xtick_labels_2[idx].set_fontweight("bold")
+        else:
+            xtick_labels_2[idx].set_color(pal["tick"])
+
+    ax2.set_ylabel("MABE (µm) / Cup IoU", color=pal["subtext"], fontsize=10.5)
+    ax2.grid(axis="y", color=pal["grid"], linestyle="--", alpha=0.7)
+    ax2.legend(handles=[
+        Line2D([0], [0], color=pal["bench_od_color"], marker='o', label='Train NFL MABE'),
+        Line2D([0], [0], color=pal["val_color"], marker='D', label='Held-Out Val MABE'),
+        Line2D([0], [0], color=pal["cup_color"], linestyle='--', marker='s', label='Cup Cavity IoU')
+    ], facecolor=pal["legend_fc"], edgecolor=pal["legend_ec"], labelcolor=pal["legend_text"], fontsize=8.5,
+       loc="upper center", bbox_to_anchor=(0.5, 1.07), ncol=3, frameon=True)
+    ax2.tick_params(colors=pal["tick"])
+    for spine in ax2.spines.values():
+        spine.set_color(pal["spine"])
+
+    fig.text(0.5, 0.015, "Orange color, text badges, and markers indicate held-out validation subjects unseen during training.  † Unedited machine mirror.",
+             color=pal["subtext"], fontsize=8.5, ha="center", style="italic")
+
+    out_path_abs = os.path.abspath(out_path)
+    os.makedirs(os.path.dirname(out_path_abs), exist_ok=True)
+    plt.tight_layout(rect=[0, 0.035, 1, 0.98])
+    plt.savefig(out_path, dpi=200, facecolor=pal["fig_face"], bbox_inches="tight")
     plt.close(fig)
     return out_path
 
@@ -379,7 +559,7 @@ def find_browser() -> Optional[str]:
     return None
 
 
-def convert_md_to_html(md_text: str, md_dir_uri: str, title: str) -> str:
+def convert_md_to_html(md_text: str, md_dir_uri: str, title: str, theme: str = "light") -> str:
     # 1. Protect code blocks
     code_blocks = []
     code_inlines = []
@@ -423,9 +603,13 @@ def convert_md_to_html(md_text: str, md_dir_uri: str, title: str) -> str:
         md_text = md_text.replace(f"@@CODE_INLINE_{i}@@", c)
 
     # 3.5. Automated Defensive List Normalization:
-    # Pre-processes markdown text so any bullet or numbered item following a non-blank line
-    # gets an explicit blank line, permanently preventing run-on list collapsing.
     md_text = normalize_markdown_lists(md_text)
+
+    # 3.6. Theme-Aware Asset Selection for PDF
+    if theme == "light":
+        for chart_base in ["cohort_raincloud_distributions", "cohort_per_scan_forest_plot", "baseline_vs_unet_head_to_head", "cohort_summary_chart"]:
+            md_text = re.sub(rf"({chart_base})(\.png)", r"\1_light\2", md_text)
+
 
     # 4. Markdown conversion
     try:
@@ -977,18 +1161,22 @@ def main():
     except ValueError:
         assets_rel = assets_abs
 
-    # Generate publication charts
+    # Generate publication charts (Dual-Theme: Dark for .md, Light for PDF)
     scans = metrics_data.get('scans', [])
     if scans:
-        raincloud_path = os.path.join(assets_abs, "cohort_raincloud_distributions.png")
-        forest_path = os.path.join(assets_abs, "cohort_per_scan_forest_plot.png")
-        baseline_path = os.path.join(assets_abs, "baseline_vs_unet_head_to_head.png")
-        print(f"[Report Builder] Rendering Figure 1: Raincloud Quad-Plot -> {raincloud_path}")
-        render_statistical_raincloud_chart(scans, raincloud_path)
-        print(f"[Report Builder] Rendering Figure 2: Complete Forest Plot -> {forest_path}")
-        render_complete_scan_forest_chart(scans, forest_path)
-        print(f"[Report Builder] Rendering Figure 3: Baseline Comparison Chart -> {baseline_path}")
-        render_baseline_comparison_chart(scans, baseline_path)
+        # Dark theme (default for Markdown viewing in dark IDE/GitHub)
+        print("[Report Builder] Generating Dark Theme Figures for Markdown...")
+        render_statistical_raincloud_chart(scans, os.path.join(assets_abs, "cohort_raincloud_distributions.png"), theme="dark")
+        render_complete_scan_forest_chart(scans, os.path.join(assets_abs, "cohort_per_scan_forest_plot.png"), theme="dark")
+        render_baseline_comparison_chart(scans, os.path.join(assets_abs, "baseline_vs_unet_head_to_head.png"), theme="dark")
+        render_cohort_summary_chart(scans, os.path.join(assets_abs, "cohort_summary_chart.png"), theme="dark")
+
+        # Light theme (publication-standard white for PDF)
+        print("[Report Builder] Generating Clean Publication White Figures for PDF...")
+        render_statistical_raincloud_chart(scans, os.path.join(assets_abs, "cohort_raincloud_distributions_light.png"), theme="light")
+        render_complete_scan_forest_chart(scans, os.path.join(assets_abs, "cohort_per_scan_forest_plot_light.png"), theme="light")
+        render_baseline_comparison_chart(scans, os.path.join(assets_abs, "baseline_vs_unet_head_to_head_light.png"), theme="light")
+        render_cohort_summary_chart(scans, os.path.join(assets_abs, "cohort_summary_chart_light.png"), theme="light")
 
     print(f"[Report Builder] Rendering Markdown report for Job {args.job_id} ({args.model_variant})...")
     md_content = generate_markdown_report(
@@ -1015,7 +1203,7 @@ def main():
         if browser_path:
             print(f"[Report Builder] Found browser for PDF rendering: {browser_path}")
             md_dir_uri = 'file:///' + md_dir.replace(os.sep, '/') + '/'
-            html_text = convert_md_to_html(md_content, md_dir_uri, os.path.basename(args.output_md))
+            html_text = convert_md_to_html(md_content, md_dir_uri, os.path.basename(args.output_md), theme="light")
             fd, temp_html = tempfile.mkstemp(suffix=".html", text=True)
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 f.write(html_text)
