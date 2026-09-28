@@ -19,6 +19,12 @@ from .compiler import (
     convert_md_to_html,
     compile_report_pdf,
 )
+from .assets import (
+    pdf_variant_filename,
+    select_executive_gallery,
+    create_pdf_image_variant,
+    generate_pdf_image_variants,
+)
 
 __all__ = [
     "get_theme_palette",
@@ -32,4 +38,8 @@ __all__ = [
     "find_browser",
     "convert_md_to_html",
     "compile_report_pdf",
+    "pdf_variant_filename",
+    "select_executive_gallery",
+    "create_pdf_image_variant",
+    "generate_pdf_image_variants",
 ]

@@ -127,7 +127,7 @@ def main() -> None:
     csv_path = output_dir / "orientation_ablation.csv"
     with csv_path.open("w", newline="", encoding="utf-8") as stream:
         fields = ["variant", "orientation_mode", "biplanar", "subject", "eye", "dice", "mabe_um", "p95_um", "cup_iou", "qc_status", "qc_flags"]
-        writer = csv.DictWriter(stream, fieldnames=fields)
+        writer = csv.DictWriter(stream, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         for row in rows:
             export = {key: row[key] for key in fields}

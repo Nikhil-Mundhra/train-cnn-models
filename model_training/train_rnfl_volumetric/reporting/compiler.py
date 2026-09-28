@@ -103,6 +103,13 @@ def convert_md_to_html(md_text: str, md_dir_uri: str, title: str, theme: str = "
     if theme == "light":
         for chart_base in ["cohort_raincloud_distributions", "cohort_per_scan_forest_plot", "baseline_vs_unet_head_to_head", "cohort_summary_chart"]:
             md_text = re.sub(rf"({chart_base})(\.png)", r"\1_light\2", md_text)
+        # Clinical panels use compact JPEG derivatives only in the PDF. Their
+        # original lossless PNGs remain untouched for archival and Markdown use.
+        md_text = re.sub(
+            r"((?:gallery|deep_dive)[^\s\)\"']+)\.png",
+            r"\1_pdf.jpg",
+            md_text,
+        )
 
     # 4. Markdown conversion
     try:

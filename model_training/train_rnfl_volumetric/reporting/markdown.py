@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from .charts import compute_distribution_stats
+from .assets import select_executive_gallery
 
 
 def normalize_markdown_lists(text: str) -> str:
@@ -41,10 +42,12 @@ def generate_markdown_report(
     job_id: str,
     checkpoint_name: str,
     model_variant: str = "Volumetric",
-    model_desc: str = ""
+    model_desc: str = "",
+    max_gallery_items: int = 24,
 ) -> str:
     scans: List[Dict[str, Any]] = metrics_data.get('scans', [])
-    gallery: List[Dict[str, Any]] = metrics_data.get('gallery', [])
+    gallery_all: List[Dict[str, Any]] = metrics_data.get('gallery', [])
+    gallery: List[Dict[str, Any]] = select_executive_gallery(gallery_all, max_gallery_items)
     deep_dives: List[Dict[str, Any]] = metrics_data.get('deep_dives', [])
 
     all_subjects = sorted(list(set(s['subject'] for s in scans))) if scans else []
@@ -387,7 +390,7 @@ The aligned dot plots summarize the {n_od} OD acquisitions only. Dice, MABE, and
 
 ## 6. OD Subject Gallery: Reference vs U-Net
 
-Central peripapillary OD B-scans ($z = z_{{\\text{{disc}}}}$) comparing the **Human-Corrected Reference (<span style="color: #0284c7; font-weight: bold;">Cyan</span>)** with the **Volumetric U-Net (<span style="color: #16a34a; font-weight: bold;">Green</span>)**. The gallery contains one OD view per subject; OS acquisitions and the commercial baseline are not shown here.
+Central peripapillary OD B-scans ($z = z_{{\\text{{disc}}}}$) comparing the **Human-Corrected Reference (<span style="color: #0284c7; font-weight: bold;">Cyan</span>)** with the **Volumetric U-Net (<span style="color: #16a34a; font-weight: bold;">Green</span>)**. The gallery {"contains one OD view per subject" if len(gallery) == len(gallery_all) else f"shows {len(gallery)} representative OD views selected from {len(gallery_all)}, prioritizing held-out scans and high-MABE failures"}; OS acquisitions and the commercial baseline are not shown here. Complete scan-level metrics remain archived in the report assets.
 
 <div class="gallery-grid">
 """

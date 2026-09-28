@@ -26,6 +26,8 @@ try:
         find_browser,
         convert_md_to_html,
         compile_report_pdf,
+        select_executive_gallery,
+        generate_pdf_image_variants,
     )
 except ImportError:
     try:
@@ -41,6 +43,8 @@ except ImportError:
             find_browser,
             convert_md_to_html,
             compile_report_pdf,
+            select_executive_gallery,
+            generate_pdf_image_variants,
         )
     except (ImportError, ValueError):
         from reporting import (
@@ -55,6 +59,8 @@ except ImportError:
             find_browser,
             convert_md_to_html,
             compile_report_pdf,
+            select_executive_gallery,
+            generate_pdf_image_variants,
         )
 
 __all__ = [
@@ -69,6 +75,8 @@ __all__ = [
     "find_browser",
     "convert_md_to_html",
     "compile_report_pdf",
+    "select_executive_gallery",
+    "generate_pdf_image_variants",
 ]
 
 
@@ -82,6 +90,18 @@ def main():
     parser.add_argument("--checkpoint_name", type=str, default="latest", help="Checkpoint description")
     parser.add_argument("--model_variant", type=str, default="Volumetric", help="Model variant label (e.g. Light, Heavy)")
     parser.add_argument("--model_desc", type=str, default="", help="Detailed architecture description")
+    parser.add_argument(
+        "--max_gallery_items",
+        type=int,
+        default=24,
+        help="Maximum representative OD gallery panels; <=0 disables the cap",
+    )
+    parser.add_argument(
+        "--pdf_jpeg_quality",
+        type=int,
+        default=84,
+        help="JPEG quality for PDF-only gallery and deep-dive images",
+    )
     args = parser.parse_args()
 
     if not os.path.exists(args.metrics_json):
@@ -115,6 +135,29 @@ def main():
         render_baseline_comparison_chart(scans, os.path.join(assets_abs, "baseline_vs_unet_head_to_head_light.png"), theme="light")
         render_cohort_summary_chart(scans, os.path.join(assets_abs, "cohort_summary_chart_light.png"), theme="light")
 
+    selected_gallery = select_executive_gallery(
+        metrics_data.get('gallery', []),
+        args.max_gallery_items,
+    )
+
+    if args.output_pdf:
+        print(
+            "[Report Builder] Generating PDF-optimized clinical images "
+            f"(gallery={len(selected_gallery)}, deep_dives={len(metrics_data.get('deep_dives', []))})..."
+        )
+        generate_pdf_image_variants(
+            selected_gallery,
+            assets_abs,
+            max_width=1200,
+            quality=args.pdf_jpeg_quality,
+        )
+        generate_pdf_image_variants(
+            metrics_data.get('deep_dives', []),
+            assets_abs,
+            max_width=1800,
+            quality=args.pdf_jpeg_quality,
+        )
+
     print(f"[Report Builder] Rendering Markdown report for Job {args.job_id} ({args.model_variant})...")
     md_content = generate_markdown_report(
         metrics_data=metrics_data,
@@ -122,7 +165,8 @@ def main():
         job_id=args.job_id,
         checkpoint_name=args.checkpoint_name,
         model_variant=args.model_variant,
-        model_desc=args.model_desc
+        model_desc=args.model_desc,
+        max_gallery_items=args.max_gallery_items,
     )
 
     os.makedirs(md_dir, exist_ok=True)

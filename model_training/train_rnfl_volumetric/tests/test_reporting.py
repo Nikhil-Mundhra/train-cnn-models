@@ -15,6 +15,7 @@ import tempfile
 import unittest
 from pathlib import Path
 import matplotlib
+from PIL import Image
 
 matplotlib.use("Agg")
 
@@ -38,6 +39,9 @@ from reporting import (
     find_browser,
     convert_md_to_html,
     compile_report_pdf,
+    pdf_variant_filename,
+    select_executive_gallery,
+    create_pdf_image_variant,
 )
 
 
@@ -171,6 +175,72 @@ class TestMarkdownUtilities(unittest.TestCase):
         self.assertIn("subject-disjoint held-out cohort", md)
         self.assertIn("## 9. Clinical Significance & Conclusion", md)
 
+    def test_executive_gallery_is_bounded_and_keeps_failure_coverage(self):
+        gallery = [
+            {
+                "subject": f"BEH{i:04d}",
+                "cohort": "Validation (Held-Out)" if i in {2, 17, 28} else "Training / Benchmark",
+                "mabe": float(i),
+            }
+            for i in range(30)
+        ]
+        selected = select_executive_gallery(gallery, max_items=12)
+        self.assertEqual(len(selected), 12)
+        self.assertIn("BEH0029", {row["subject"] for row in selected})
+        self.assertTrue(any("Validation" in row["cohort"] for row in selected))
+
+    def test_generate_markdown_report_describes_sampled_gallery(self):
+        metrics_data = {
+            "scans": [
+                {
+                    "subject": "BEH0001",
+                    "eye": "OD",
+                    "is_validation": False,
+                    "unet_dice": 0.9,
+                    "unet_mabe": 3.0,
+                    "unet_p95": 8.0,
+                    "unet_cup_iou": 0.93,
+                }
+            ],
+            "gallery": [
+                {
+                    "subject": f"BEH{i:04d}",
+                    "filename": f"gallery_{i}.png",
+                    "dice": 0.9,
+                    "mabe": float(i),
+                }
+                for i in range(30)
+            ],
+        }
+        md = generate_markdown_report(
+            metrics_data,
+            "assets",
+            "1",
+            "best.pt",
+            max_gallery_items=10,
+        )
+        self.assertIn("shows 10 representative OD views selected from 30", md)
+
+
+class TestPdfImageAssets(unittest.TestCase):
+    def test_pdf_variant_filename(self):
+        self.assertEqual(pdf_variant_filename("gallery/example.png"), "example_pdf.jpg")
+
+    def test_create_pdf_image_variant_resizes_and_preserves_source(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "source.png"
+            destination = Path(temp_dir) / "source_pdf.jpg"
+            Image.new("RGB", (2400, 800), (80, 120, 160)).save(source)
+            original_size = source.stat().st_size
+
+            create_pdf_image_variant(str(source), str(destination), max_width=1200, quality=84)
+
+            self.assertTrue(source.exists())
+            self.assertEqual(source.stat().st_size, original_size)
+            with Image.open(destination) as image:
+                self.assertEqual(image.format, "JPEG")
+                self.assertEqual(image.size, (1200, 400))
+
 
 class TestHtmlCompiler(unittest.TestCase):
     """Verifies HTML rendering, KaTeX preservation, and theme asset replacement."""
@@ -183,9 +253,15 @@ class TestHtmlCompiler(unittest.TestCase):
         self.assertIn("Report Title", html)
 
     def test_convert_md_to_html_theme_asset_replacement(self):
-        md = "![Distribution](assets/cohort_raincloud_distributions.png)"
+        md = "\n".join([
+            "![Distribution](assets/cohort_raincloud_distributions.png)",
+            "![Gallery](assets/gallery_BEH0001.png)",
+            '<img src="assets/deep_dive_BEH0001.png" />',
+        ])
         html = convert_md_to_html(md, "file:///fake/path/", "Test", theme="light")
         self.assertIn("cohort_raincloud_distributions_light.png", html)
+        self.assertIn("gallery_BEH0001_pdf.jpg", html)
+        self.assertIn("deep_dive_BEH0001_pdf.jpg", html)
 
     def test_find_browser_safe_execution(self):
         # find_browser should execute without crashing and return str or None

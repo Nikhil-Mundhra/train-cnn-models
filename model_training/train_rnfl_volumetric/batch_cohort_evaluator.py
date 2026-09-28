@@ -1056,7 +1056,7 @@ class CohortEvaluatorPipeline:
                 "subject", "eye", "cohort", "pairing_status", "unet_dice", "commercial_dice", "dice_delta",
                 "unet_mabe_um", "commercial_mabe_um", "mabe_delta_um", "unet_cup_iou", "commercial_cup_iou", "cup_iou_delta",
             ]
-            writer = csv.DictWriter(f, fieldnames=fields)
+            writer = csv.DictWriter(f, fieldnames=fields, lineterminator="\n")
             writer.writeheader()
             for result in cohort_results:
                 if result.is_mirror:
@@ -1095,7 +1095,7 @@ class CohortEvaluatorPipeline:
                 "raw_cup_edge_valid_slices", "raw_cup_left_edge_mae_um",
                 "raw_cup_right_edge_mae_um", "raw_cup_width_mae_um",
             ]
-            writer = csv.DictWriter(f, fieldnames=fields)
+            writer = csv.DictWriter(f, fieldnames=fields, lineterminator="\n")
             writer.writeheader()
             for result in cohort_results:
                 if result.is_mirror:
@@ -1127,6 +1127,7 @@ class CohortEvaluatorPipeline:
             writer = csv.DictWriter(
                 f,
                 fieldnames=["subject", "eye", "cohort", "qc_status", "qc_flags", "dice", "mabe_um", "cup_iou"],
+                lineterminator="\n",
             )
             writer.writeheader()
             for result in review_rows:
