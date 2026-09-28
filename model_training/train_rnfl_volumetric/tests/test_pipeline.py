@@ -94,6 +94,38 @@ class TestRNFLPipeline(unittest.TestCase):
         # Verify gradients exist
         self.assertIsNotNone(model.mask_head.weight.grad)
 
+    def test_laterality_embedding_forward(self):
+        device = torch.device("cpu")
+        model = VolumetricRNFLNet(
+            in_channels=5,
+            base_channels=8,
+            use_laterality_embedding=True
+        ).to(device)
+
+        dummy_img = torch.randn(2, 5, 768, 320, device=device)
+        eye_idx = torch.tensor([0, 1], dtype=torch.long, device=device)
+        preds = model(dummy_img, eye_idx=eye_idx)
+
+        self.assertEqual(preds['mask_logits'].shape, (2, 1, 768, 320))
+        self.assertEqual(preds['ilm_pred'].shape, (2, 320))
+        self.assertEqual(preds['nfl_pred'].shape, (2, 320))
+        self.assertEqual(preds['cup_logits'].shape, (2, 320))
+
+    def test_dataset_augmentation_and_eye_idx(self):
+        ds = SolixRNFLDataset(
+            dataset_root=self.dataset_root,
+            subjects=[self.sample_subject],
+            context_slices=5,
+            augment=True
+        )
+        item = ds[160]
+        self.assertIn('eye_idx', item)
+        self.assertEqual(item['eye_idx'].item(), 0)  # BEH0181 OD is 0
+        self.assertEqual(item['image'].shape, (5, 768, 320))
+        self.assertEqual(item['mask'].shape, (1, 768, 320))
+        self.assertEqual(item['ilm_surface'].shape, (320,))
+        self.assertEqual(item['nfl_surface'].shape, (320,))
+
 
 if __name__ == "__main__":
     unittest.main()

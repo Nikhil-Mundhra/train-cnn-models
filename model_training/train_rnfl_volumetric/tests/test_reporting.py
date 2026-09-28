@@ -164,7 +164,7 @@ class TestMarkdownUtilities(unittest.TestCase):
         self.assertIn("NYUAD HPC Jubail (SLURM Job `12345`)", md)
         self.assertIn("gallery_BEH0001.png", md)
         self.assertIn("deep_dive_BEH0001.png", md)
-        self.assertIn("Benchmark OD MABE", md)
+        self.assertIn("Benchmark MABE", md)
 
 
 class TestHtmlCompiler(unittest.TestCase):
@@ -207,6 +207,12 @@ class TestChartRendering(unittest.TestCase):
                 "bad_mabe": 6.2,
                 "bad_p95": 16.5,
                 "bad_cup_iou": 0.82,
+                "audit_edit_threshold_px": 1.0,
+                "audit_edited_columns": 120,
+                "raw_edit_mabe_um": 8.0,
+                "unet_edit_mabe_um": 4.0,
+                "audit_correction_gain": 0.5,
+                "audit_unchanged_preservation_rate": 0.80,
             },
             {
                 "subject": "BEH0002",
@@ -221,6 +227,12 @@ class TestChartRendering(unittest.TestCase):
                 "bad_mabe": 7.5,
                 "bad_p95": 19.0,
                 "bad_cup_iou": 0.79,
+                "audit_edit_threshold_px": 1.0,
+                "audit_edited_columns": 80,
+                "raw_edit_mabe_um": 6.0,
+                "unet_edit_mabe_um": 9.0,
+                "audit_correction_gain": -0.5,
+                "audit_unchanged_preservation_rate": 0.65,
             },
             {
                 "subject": "BEH0003",

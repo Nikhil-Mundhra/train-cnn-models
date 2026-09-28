@@ -170,6 +170,7 @@ class SolixRNFLDataset(Dataset):
         context_slices=5,
         standardize_eye=True,
         enable_orthogonal=False,
+        augment=False,
         transform=None
     ):
         self.dataset_root = dataset_root
@@ -179,6 +180,7 @@ class SolixRNFLDataset(Dataset):
         self.half_ctx = context_slices // 2
         self.standardize_eye = standardize_eye
         self.enable_orthogonal = enable_orthogonal
+        self.augment = augment
         self.transform = transform
 
         tsv_dir = os.path.join(dataset_root, "tsv", arm)
@@ -282,8 +284,10 @@ class SolixRNFLDataset(Dataset):
             # Vertical slice along fast axis (X)
             n_slices = scan['n_ascans']
             eff_idx = (n_slices - 1 - s_idx) if (self.standardize_eye and scan['eye'] == 'OS') else s_idx
+            # Preserve consistent anatomical progression (temporal -> nasal) across eyes
+            offset_sign = -1 if (self.standardize_eye and scan['eye'] == 'OS') else 1
             slice_indices = [
-                min(max(eff_idx + offset, 0), n_slices - 1)
+                min(max(eff_idx + offset_sign * offset, 0), n_slices - 1)
                 for offset in range(-self.half_ctx, self.half_ctx + 1)
             ]
             # Transpose (320, 768) -> (768, 320)
@@ -314,6 +318,35 @@ class SolixRNFLDataset(Dataset):
             nfl_row = np.flip(nfl_row).copy()
             cup_absent = np.flip(cup_absent).copy()
 
+        # 4. Data Augmentation (active during training when augment=True)
+        if self.augment:
+            # A. Intensity Scaling & Contrast Jitter (simulates varying signal strength / media opacity)
+            scale = np.random.uniform(0.85, 1.15)
+            gamma = np.random.uniform(0.90, 1.10)
+            img_stack = np.clip(np.power(np.clip(img_stack * scale, 0.0, 1.0), gamma), 0.0, 1.0)
+
+            # B. Additive Gaussian Speckle Noise
+            if np.random.rand() > 0.5:
+                noise = np.random.normal(0, 0.012, img_stack.shape).astype(np.float32)
+                img_stack = np.clip(img_stack + noise, 0.0, 1.0)
+
+            # C. Axial Vertical Translation (jitter up to ±15 pixels)
+            if np.random.rand() > 0.3:
+                dy = int(np.random.randint(-15, 16))
+                if dy != 0:
+                    shifted_img = np.zeros_like(img_stack)
+                    shifted_mask = np.zeros_like(mask)
+                    if dy > 0:
+                        shifted_img[:, dy:, :] = img_stack[:, :-dy, :]
+                        shifted_mask[dy:, :] = mask[:-dy, :]
+                    else:
+                        shifted_img[:, :dy, :] = img_stack[:, -dy:, :]
+                        shifted_mask[:dy, :] = mask[-dy:, :]
+                    img_stack = shifted_img
+                    mask = shifted_mask
+                    ilm_row = np.where(np.isnan(ilm_row), np.nan, np.clip(ilm_row + dy, 0, rows - 1))
+                    nfl_row = np.where(np.isnan(nfl_row), np.nan, np.clip(nfl_row + dy, 0, rows - 1))
+
         # Fill NaNs in surface arrays with 0.0 for PyTorch tensor compatibility
         ilm_tensor = np.nan_to_num(ilm_row, nan=0.0).astype(np.float32)
         nfl_tensor = np.nan_to_num(nfl_row, nan=0.0).astype(np.float32)
@@ -324,6 +357,7 @@ class SolixRNFLDataset(Dataset):
         ilm_tensor = torch.from_numpy(ilm_tensor)              # (320,)
         nfl_tensor = torch.from_numpy(nfl_tensor)              # (320,)
         cup_absent_tensor = torch.from_numpy(cup_absent)       # (320,)
+        eye_idx_tensor = torch.tensor(0 if scan['eye'] == 'OD' else 1, dtype=torch.long)
 
         return {
             'image': img_tensor,
@@ -333,6 +367,7 @@ class SolixRNFLDataset(Dataset):
             'cup_absent': cup_absent_tensor,
             'subject': scan['subject'],
             'eye': scan['eye'],
+            'eye_idx': eye_idx_tensor,
             'bscan_idx': s_idx,
             'plane': plane,
             'is_peripapillary': sample['is_peripapillary']

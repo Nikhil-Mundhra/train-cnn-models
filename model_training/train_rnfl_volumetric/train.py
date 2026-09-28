@@ -84,6 +84,8 @@ def validate(model, val_loader, criterion, device, autocast_device="cpu", amp_dt
 
     # Filtered peripapillary errors
     peri_nfl_errs = []
+    peri_nfl_errs_od = []
+    peri_nfl_errs_os = []
 
     with torch.no_grad():
         with torch.autocast(device_type=autocast_device, dtype=amp_dtype, enabled=use_amp):
@@ -91,7 +93,12 @@ def validate(model, val_loader, criterion, device, autocast_device="cpu", amp_dt
                 for k in ['image', 'mask', 'ilm_surface', 'nfl_surface', 'cup_absent', 'is_peripapillary']:
                     batch[k] = batch[k].to(device)
 
-                preds = model(batch['image'])
+                eye_idx = batch.get('eye_idx', None)
+                if eye_idx is not None and getattr(model, 'use_laterality_embedding', False):
+                    preds = model(batch['image'], eye_idx=eye_idx.to(device))
+                else:
+                    preds = model(batch['image'])
+
                 losses = criterion(preds, batch)
                 val_loss += losses['loss'].item()
 
@@ -101,15 +108,23 @@ def validate(model, val_loader, criterion, device, autocast_device="cpu", amp_dt
                 nfl_mabes.append(metrics['nfl_mabe'])
                 cup_ious.append(metrics['cup_iou'])
 
-                # Collect peripapillary slice metrics
+                # Collect peripapillary slice metrics (overall, OD, and OS)
                 is_peri = batch['is_peripapillary']
                 if is_peri.any():
                     cup_absent = batch['cup_absent'][is_peri]
                     tissue = (1.0 - cup_absent)
                     nfl_err = torch.abs(preds['nfl_pred'][is_peri] - batch['nfl_surface'][is_peri]) * AXIAL_UM
-                    valid_err = nfl_err[tissue > 0.5].cpu().numpy()
-                    if len(valid_err) > 0:
-                        peri_nfl_errs.extend(valid_err)
+                    eyes = [batch['eye'][i] for i in range(len(batch['eye'])) if is_peri[i]]
+                    for i_peri, eye_str in enumerate(eyes):
+                        t = tissue[i_peri]
+                        e = nfl_err[i_peri]
+                        valid_err = e[t > 0.5].cpu().numpy()
+                        if len(valid_err) > 0:
+                            peri_nfl_errs.extend(valid_err)
+                            if eye_str.upper() == 'OD':
+                                peri_nfl_errs_od.extend(valid_err)
+                            else:
+                                peri_nfl_errs_os.extend(valid_err)
 
     n_batches = len(val_loader)
     avg_loss = val_loss / n_batches
@@ -120,6 +135,8 @@ def validate(model, val_loader, criterion, device, autocast_device="cpu", amp_dt
 
     peri_mabe = float(np.mean(peri_nfl_errs)) if peri_nfl_errs else avg_nfl_mabe
     peri_p95 = float(np.percentile(peri_nfl_errs, 95)) if peri_nfl_errs else 0.0
+    peri_od_mabe = float(np.mean(peri_nfl_errs_od)) if peri_nfl_errs_od else peri_mabe
+    peri_os_mabe = float(np.mean(peri_nfl_errs_os)) if peri_nfl_errs_os else peri_mabe
 
     return {
         'loss': avg_loss,
@@ -128,7 +145,9 @@ def validate(model, val_loader, criterion, device, autocast_device="cpu", amp_dt
         'nfl_mabe': avg_nfl_mabe,
         'cup_iou': avg_cup_iou,
         'peri_nfl_mabe': peri_mabe,
-        'peri_nfl_p95': peri_p95
+        'peri_nfl_p95': peri_p95,
+        'peri_od_mabe': peri_od_mabe,
+        'peri_os_mabe': peri_os_mabe
     }
 
 
@@ -143,34 +162,49 @@ def train(args):
     os.makedirs(args.checkpoint_dir, exist_ok=True)
 
     # 1. Subject-level Dataset Partitioning
+    import glob
+
     tsv_good_dir = os.path.join(args.dataset_root, "tsv", "good")
+    dcm_dir = os.path.join(args.dataset_root, "dicom")
     if os.path.exists(tsv_good_dir):
-        all_subjects = sorted([d for d in os.listdir(tsv_good_dir) if os.path.isdir(os.path.join(tsv_good_dir, d)) and not d.startswith('.')])
+        raw_subjects = sorted([d for d in os.listdir(tsv_good_dir) if os.path.isdir(os.path.join(tsv_good_dir, d)) and not d.startswith('.')])
     else:
-        all_subjects = [
+        raw_subjects = [
             'BEH0086', 'BEH0090', 'BEH0096', 'BEH0174', 'BEH0181', 'BEH0185',
             'BEH0241', 'BEH0249', 'BEH0259', 'BEH0264', 'BEH0282', 'BEH0284',
             'BEH0287', 'BEH0294', 'BEH0310', 'BEH0314', 'BEH0321', 'BEH0335',
             'BEH0349', 'BEH0354', 'BEH0364', 'BEH0398', 'BEH0410'
         ]
+    all_subjects = [
+        s for s in raw_subjects
+        if glob.glob(os.path.join(dcm_dir, s, f"*{args.protocol}*_OPT.dcm"))
+    ]
+    if not all_subjects:
+        all_subjects = raw_subjects
+
     val_subjects = [s.strip() for s in args.val_subjects.split(',') if s.strip()]
     train_subjects = [s for s in all_subjects if s not in val_subjects]
 
-    print(f"[Training] Total Cohort Pool: {len(all_subjects)} subjects")
+    print(f"[Training] Protocol: {args.protocol} | Augmentation: {args.augment} | Laterality Emb: {args.use_laterality_embedding}")
+    print(f"[Training] Total Cohort Pool: {len(all_subjects)} subjects with valid {args.protocol} scans")
     print(f"[Training] Training Subjects ({len(train_subjects)}): {train_subjects}")
     print(f"[Training] Validation Subjects ({len(val_subjects)}): {val_subjects}")
 
     train_ds = SolixRNFLDataset(
         dataset_root=args.dataset_root,
         subjects=train_subjects,
+        protocol=args.protocol,
         context_slices=args.context_slices,
-        enable_orthogonal=args.enable_orthogonal
+        enable_orthogonal=args.enable_orthogonal,
+        augment=args.augment
     )
     val_ds = SolixRNFLDataset(
         dataset_root=args.dataset_root,
         subjects=val_subjects,
+        protocol=args.protocol,
         context_slices=args.context_slices,
-        enable_orthogonal=False  # Keep validation on standard clinical B-scan planes
+        enable_orthogonal=False,  # Keep validation on standard clinical B-scan planes
+        augment=False
     )
 
     train_loader = DataLoader(
@@ -195,13 +229,14 @@ def train(args):
         b = args.base_channels
         model_channels = (b, b * 2, b * 4, b * 8, b * 16)
 
-    print(f"[Architecture] Initializing VolumetricRNFLNet (base_channels={args.base_channels}, channels={model_channels}, res_units={args.num_res_units})...")
+    print(f"[Architecture] Initializing VolumetricRNFLNet (base_channels={args.base_channels}, channels={model_channels}, res_units={args.num_res_units}, laterality_emb={args.use_laterality_embedding})...")
     model = VolumetricRNFLNet(
         in_channels=args.context_slices,
         base_channels=args.base_channels,
         channels=model_channels,
         strides=(2, 2, 2, 2),
-        num_res_units=args.num_res_units
+        num_res_units=args.num_res_units,
+        use_laterality_embedding=args.use_laterality_embedding
     ).to(device)
 
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -258,8 +293,17 @@ def train(args):
             for k in ['image', 'mask', 'ilm_surface', 'nfl_surface', 'cup_absent', 'is_peripapillary']:
                 batch[k] = batch[k].to(device)
 
+            eye_idx = batch.get('eye_idx', None)
+            if eye_idx is not None and args.use_laterality_embedding:
+                eye_idx = eye_idx.to(device)
+            else:
+                eye_idx = None
+
             with get_autocast_context():
-                preds = model(batch['image'])
+                if eye_idx is not None:
+                    preds = model(batch['image'], eye_idx=eye_idx)
+                else:
+                    preds = model(batch['image'])
                 loss_dict = criterion(preds, batch)
                 loss = loss_dict['loss'] / args.accum_steps
 
@@ -313,7 +357,7 @@ def train(args):
             f"Epoch [{epoch}/{args.epochs}] Total Time: {epoch_total_time:.1f}s (Train: {train_time:.1f}s, Val: {val_time:.1f}s) | "
             f"Train Loss: {train_loss:.2f} | Val Loss: {val_metrics['loss']:.2f} | "
             f"Val Dice: {val_metrics['dice']:.4f} | "
-            f"Val Peri NFL MABE: {val_metrics['peri_nfl_mabe']:.2f} um | "
+            f"Val Peri NFL MABE: {val_metrics['peri_nfl_mabe']:.2f} um (OD: {val_metrics['peri_od_mabe']:.2f} um, OS: {val_metrics['peri_os_mabe']:.2f} um) | "
             f"Val Peri NFL P95: {val_metrics['peri_nfl_p95']:.2f} um",
             flush=True
         )
@@ -342,7 +386,7 @@ def train(args):
             best_score = score
             best_peri_mabe = val_metrics['peri_nfl_mabe']
             torch.save(ckpt_data, best_checkpoint_path)
-            print(f"[Checkpoint] New best balanced model (Score: {score:.2f} | Peri NFL MABE: {best_peri_mabe:.2f} um | Dice: {val_metrics['dice']:.4f}) saved to {best_checkpoint_path}\n", flush=True)
+            print(f"[Checkpoint] New best balanced model (Score: {score:.2f} | Peri NFL MABE: {best_peri_mabe:.2f} um [OD: {val_metrics['peri_od_mabe']:.2f}, OS: {val_metrics['peri_os_mabe']:.2f}] | Dice: {val_metrics['dice']:.4f}) saved to {best_checkpoint_path}\n", flush=True)
 
     print("\n==========================================================================================")
     print(f"=== TRAINING COMPLETE. Best Peripapillary NFL MABE: {best_peri_mabe:.2f} um ===")
@@ -353,6 +397,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_root", type=str, default="/Users/nikhilmundhra/Library/CloudStorage/Box-Box/deidentified")
     parser.add_argument("--val_subjects", type=str, default="BEH0335,BEH0314")
+    parser.add_argument("--protocol", type=str, default="Disc Cube", help="OCT scan protocol to train on (e.g. 'Disc Cube')")
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--accum_steps", type=int, default=2)
@@ -370,6 +415,9 @@ if __name__ == "__main__":
     parser.add_argument("--num_res_units", type=int, default=2, help="Number of residual units per stage")
     parser.add_argument("--enable_orthogonal", action="store_true", default=True, help="Enable orthogonal bi-planar vertical slicing during training")
     parser.add_argument("--disable_orthogonal", dest="enable_orthogonal", action="store_false", help="Disable orthogonal bi-planar training")
+    parser.add_argument("--augment", action="store_true", default=True, help="Enable training data augmentations (speckle, contrast, depth jitter)")
+    parser.add_argument("--no_augment", dest="augment", action="store_false", help="Disable training data augmentations")
+    parser.add_argument("--use_laterality_embedding", action="store_true", default=False, help="Enable explicit OD/OS conditioning embedding")
     parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints/train_rnfl_volumetric")
     parser.add_argument("--log_interval", type=int, default=100)
     args = parser.parse_args()

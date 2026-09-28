@@ -44,16 +44,21 @@ fi
 echo "Python Executable: ${PYTHON_BIN}"
 "${PYTHON_BIN}" -c "import torch; print('PyTorch:', torch.__version__, '| CUDA Available:', torch.cuda.is_available(), '| Device:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None')"
 
-DATASET_ROOT="${SCRATCH_DIR}/deidentified"
+if [ -d "${SCRATCH_DIR}/deidentified-new" ]; then
+    DATASET_ROOT="${SCRATCH_DIR}/deidentified-new"
+    echo "[Dataset] Using expanded cohort at: ${DATASET_ROOT}"
+elif [ -d "${SCRATCH_DIR}/deidentified" ]; then
+    DATASET_ROOT="${SCRATCH_DIR}/deidentified"
+    echo "[Dataset] Using standard cohort at: ${DATASET_ROOT}"
+else
+    echo "[ERROR] Dataset not found in ${SCRATCH_DIR} (checked deidentified-new and deidentified)!"
+    exit 1
+fi
+
 REPO_DIR="${HOME}/train-cnn-models"
 TRAIN_SCRIPT="${REPO_DIR}/model_training/train_rnfl_volumetric/train.py"
 EVAL_SCRIPT="${REPO_DIR}/model_training/train_rnfl_volumetric/batch_cohort_evaluator.py"
 REPORT_SCRIPT="${REPO_DIR}/model_training/train_rnfl_volumetric/build_cohort_report.py"
-
-if [ ! -d "${DATASET_ROOT}" ]; then
-    echo "[ERROR] Dataset not found at ${DATASET_ROOT}!"
-    exit 1
-fi
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
@@ -81,6 +86,7 @@ echo "##################################################################"
     --num_workers 6 \
     --precision "bf16" \
     --enable_orthogonal \
+    --augment \
     --device "cuda" \
     --checkpoint_dir "${CHECKPOINT_DIR}" \
     --log_interval 25
@@ -101,10 +107,11 @@ echo "##################################################################"
     --dataset_root "${DATASET_ROOT}" \
     --output_dir "${REPORT_DIR}" \
     --val_subjects "BEH0335,BEH0314,BEH0086" \
+    --os_orientation_mode "corrected" \
     --batch_size 8 \
     --device "cuda"
 
-echo "[Step 2 SUCCESS] Bi-Planar Evaluation finished across 46 paired volumes."
+echo "[Step 2 SUCCESS] Bi-Planar Evaluation finished across cohort volumes."
 
 echo ""
 echo "##################################################################"

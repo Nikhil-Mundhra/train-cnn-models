@@ -292,7 +292,7 @@ def convert_md_to_html(md_text: str, md_dir_uri: str, title: str, theme: str = "
 </head>
 <body>
     <div style="position: fixed; bottom: 0; left: 0; width: 100%; text-align: center; font-size: 9pt; color: #6e7781; background: white;">
-        {title} | NYUAD Jubail HPC
+        {title} | Corrected Biplanar Cohort Evaluation
     </div>
     {html_body}
 </body>

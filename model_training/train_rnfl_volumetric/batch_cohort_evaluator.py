@@ -21,7 +21,7 @@ from typing import Dict, List, Optional, Tuple, Any
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
-from matplotlib.patches import Patch
+from matplotlib.patches import Patch, Rectangle
 from matplotlib.lines import Line2D
 import scipy.ndimage
 
@@ -39,6 +39,11 @@ from orientation import (
 )
 from quality_control import assess_prediction
 from evaluation_manifest import is_evaluation_split, load_split_manifest
+from audit_analysis import (
+    AUDIT_EDIT_THRESHOLD_PX,
+    PRESERVATION_TOLERANCE_PX,
+    compute_audit_correction_metrics,
+)
 
 AXIAL_RES_UM: float = 3.09
 
@@ -80,6 +85,25 @@ class ScanEvaluationResult:
     bad_mabe: Optional[float] = None
     bad_p95: Optional[float] = None
     bad_cup_iou: Optional[float] = None
+    audit_edit_threshold_px: float = AUDIT_EDIT_THRESHOLD_PX
+    audit_edited_columns: int = 0
+    audit_unchanged_columns: int = 0
+    audit_edit_fraction: Optional[float] = None
+    raw_edit_mabe_um: Optional[float] = None
+    unet_edit_mabe_um: Optional[float] = None
+    audit_correction_gain: Optional[float] = None
+    audit_edit_recovery_rate: Optional[float] = None
+    unet_unchanged_mabe_um: Optional[float] = None
+    audit_unchanged_preservation_rate: Optional[float] = None
+    unet_cup_presence_recall: Optional[float] = None
+    unet_cup_edge_valid_slices: int = 0
+    unet_cup_left_edge_mae_um: Optional[float] = None
+    unet_cup_right_edge_mae_um: Optional[float] = None
+    unet_cup_width_mae_um: Optional[float] = None
+    raw_cup_edge_valid_slices: int = 0
+    raw_cup_left_edge_mae_um: Optional[float] = None
+    raw_cup_right_edge_mae_um: Optional[float] = None
+    raw_cup_width_mae_um: Optional[float] = None
     qc_status: str = "not_assessed"
     qc_flags: List[str] = field(default_factory=list)
     qc_metrics: Dict[str, float] = field(default_factory=dict)
@@ -291,12 +315,16 @@ class VolumetricRNFLPredictor:
             channels = tuple(base_channels * (2**i) for i in range(5))
 
         num_res_units = ckpt_args.get('num_res_units', 2)
+        use_laterality_embedding = ckpt_args.get('use_laterality_embedding', False)
+        if not use_laterality_embedding:
+            use_laterality_embedding = 'eye_emb.weight' in state_dict
 
         model = VolumetricRNFLNet(
             in_channels=5,
             base_channels=base_channels,
             channels=channels,
-            num_res_units=num_res_units
+            num_res_units=num_res_units,
+            use_laterality_embedding=use_laterality_embedding,
         ).to(device)
         model.load_state_dict(state_dict)
         model.eval()
@@ -307,11 +335,17 @@ class VolumetricRNFLPredictor:
             os_orientation_mode=os_orientation_mode,
         )
 
-    def _forward_batch(self, batch_tensor: torch.Tensor) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    def _forward_batch(self, batch_tensor: torch.Tensor, eye: Optional[str] = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Executes a single forward pass under autocast and converts outputs to numpy arrays."""
+        eye_idx = None
+        if getattr(self.model, 'use_laterality_embedding', False) and eye is not None:
+            eye_idx = torch.tensor([0 if eye.upper() == 'OD' else 1] * batch_tensor.size(0), dtype=torch.long, device=self.device)
         with torch.no_grad():
             with torch.autocast(device_type=self.autocast_device, dtype=torch.bfloat16, enabled=self.use_amp):
-                preds = self.model(batch_tensor)
+                if eye_idx is not None:
+                    preds = self.model(batch_tensor, eye_idx=eye_idx)
+                else:
+                    preds = self.model(batch_tensor)
                 probs = torch.sigmoid(preds['mask_logits']).squeeze(1).float().cpu().numpy()
                 cup_probs = torch.sigmoid(preds['cup_logits']).float().cpu().numpy()
                 ilm_preds = preds['ilm_pred'].float().cpu().numpy()
@@ -346,7 +380,7 @@ class VolumetricRNFLPredictor:
                 batch_slices.append(img_stack)
 
             batch_tensor = torch.from_numpy(np.stack(batch_slices, axis=0)).to(self.device)
-            probs, ilm_preds, nfl_preds, cup_probs = self._forward_batch(batch_tensor)
+            probs, ilm_preds, nfl_preds, cup_probs = self._forward_batch(batch_tensor, eye=oct_volume.eye)
 
             if flip_os:
                 probs = np.flip(probs, axis=-1).copy()
@@ -366,6 +400,8 @@ class VolumetricRNFLPredictor:
         oct_volume: OCTVolume
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Performs 2.5D context inference across orthogonal vertical planes (X-axis slices)."""
+        flip_os = horizontal_requires_flip(oct_volume.eye, self.os_orientation_mode)
+        offset_sign = -1 if flip_os else 1
         memmap = oct_volume.memmap
         n_bscans = oct_volume.n_bscans
         rows = oct_volume.rows
@@ -384,7 +420,7 @@ class VolumetricRNFLPredictor:
                 eff_a, dest_a = vertical_source_and_destination(
                     a_idx, cols, oct_volume.eye, self.os_orientation_mode
                 )
-                slice_indices = [min(max(eff_a + o, 0), cols - 1) for o in range(-self.half_ctx, self.half_ctx + 1)]
+                slice_indices = [min(max(eff_a + offset_sign * o, 0), cols - 1) for o in range(-self.half_ctx, self.half_ctx + 1)]
                 # Transpose (320, 768) -> (768, 320)
                 stack = [memmap[:, :, s].T for s in slice_indices]
                 img_stack = np.stack(stack, axis=0).astype(np.float32) / self.config.norm_divisor
@@ -392,7 +428,7 @@ class VolumetricRNFLPredictor:
                 destinations.append(dest_a)
 
             batch_tensor = torch.from_numpy(np.stack(batch_slices, axis=0)).to(self.device)
-            v_probs, v_ilm, v_nfl, v_cup = self._forward_batch(batch_tensor)
+            v_probs, v_ilm, v_nfl, v_cup = self._forward_batch(batch_tensor, eye=oct_volume.eye)
 
             for i, dest_a in enumerate(destinations):
                 # Transpose (768, 320) -> (320, 768) to map (Z, Y) back to (Y, Z)
@@ -618,6 +654,19 @@ class ClinicalMetricsCalculator:
 
         has_valid_bad = (len(slice_metrics_bad) > 0 and not is_mirror)
 
+        peripapillary_slices = np.array([
+            abs(b_idx - geom.zc) <= int(2.0 * geom.r_disc)
+            for b_idx in range(oct_volume.n_bscans)
+        ])
+        audit_metrics = compute_audit_correction_metrics(
+            clinician_nfl=curves_good['NFL'],
+            raw_nfl=curves_bad['NFL'] if curves_bad is not None else None,
+            predicted_nfl=prediction.nfl_curve,
+            predicted_cup_probability=prediction.cup_probs,
+            peripapillary_slices=peripapillary_slices,
+            axial_res_um=self.axial_res_um,
+        )
+
         return ScanEvaluationResult(
             subject=oct_volume.subject,
             eye=oct_volume.eye,
@@ -632,6 +681,7 @@ class ClinicalMetricsCalculator:
             bad_mabe=float(np.mean([m.nfl_mabe for m in slice_metrics_bad])) if has_valid_bad else None,
             bad_p95=float(np.mean([m.nfl_p95 for m in slice_metrics_bad])) if has_valid_bad else None,
             bad_cup_iou=float(np.mean([m.cup_iou for m in slice_metrics_bad])) if has_valid_bad else None,
+            **audit_metrics,
         )
 
 
@@ -725,8 +775,8 @@ class CohortVisualizer:
             ax.set_title(f"{title}\nCentral B-scan {zc}", color="white", fontsize=11, fontweight="bold")
             ax.set_ylim(440, 180)
             if col_idx == 0:
-                ax.add_patch(matplotlib.patches.Rectangle((60, 220), 80, 150, fill=False, edgecolor="#f8fafc", linewidth=1.4, linestyle="--"))
-                ax.add_patch(matplotlib.patches.Rectangle((180, 220), 80, 150, fill=False, edgecolor="#f8fafc", linewidth=1.4, linestyle="--"))
+                ax.add_patch(Rectangle((60, 220), 80, 150, fill=False, edgecolor="#f8fafc", linewidth=1.4, linestyle="--"))
+                ax.add_patch(Rectangle((180, 220), 80, 150, fill=False, edgecolor="#f8fafc", linewidth=1.4, linestyle="--"))
             ax.axis("off")
 
         # Row 1, Col 0: Nasal Rim Zoom
@@ -791,7 +841,7 @@ class CohortVisualizer:
         return render_complete_scan_forest_chart([r.to_dict() for r in scan_results], out_path, theme=theme)
 
     def render_baseline_comparison_chart(self, scan_results: List[ScanEvaluationResult], theme: str = "dark") -> Optional[str]:
-        """Renders publication Figure 3: Baseline vs U-Net comparative delta."""
+        """Renders publication Figure 3: edit-focused audit-correction analysis."""
         from build_cohort_report import render_baseline_comparison_chart
         suffix = "_light.png" if theme == "light" else ".png"
         out_path = os.path.join(self.output_dir, f"baseline_vs_unet_head_to_head{suffix}")
@@ -964,6 +1014,14 @@ class CohortEvaluatorPipeline:
         json_path = os.path.join(self.assets_dir, "cohort_evaluation_metrics.json")
         with open(json_path, "w") as f:
             json.dump({
+                'metadata': {
+                    'orientation_mode': self.os_orientation_mode,
+                    'biplanar_fusion': self.biplanar_fusion,
+                    'scan_count': len(cohort_results),
+                    'qc_threshold_profile': 'Operational engineering defaults; thresholds are not clinically validated.',
+                    'audit_edit_threshold_px': AUDIT_EDIT_THRESHOLD_PX,
+                    'audit_unchanged_preservation_tolerance_px': PRESERVATION_TOLERANCE_PX,
+                },
                 'scans': [r.to_dict() for r in cohort_results],
                 'gallery': gallery_manifest,
                 'deep_dives': deep_dive_manifest
@@ -1001,6 +1059,35 @@ class CohortEvaluatorPipeline:
                     "cup_iou_delta": "" if result.bad_cup_iou is None else f"{result.unet_cup_iou - result.bad_cup_iou:.6f}",
                 })
         print(f"[Cohort Pipeline] Commercial pairing audit saved to: {paired_csv}")
+
+        correction_csv = os.path.join(self.assets_dir, "audit_correction_analysis.csv")
+        with open(correction_csv, "w", newline="") as f:
+            fields = [
+                "subject", "eye", "cohort", "pairing_status", "audit_edit_threshold_px",
+                "audit_edited_columns", "audit_unchanged_columns", "audit_edit_fraction",
+                "raw_edit_mabe_um", "unet_edit_mabe_um", "audit_correction_gain",
+                "audit_edit_recovery_rate", "unet_unchanged_mabe_um",
+                "audit_unchanged_preservation_rate", "unet_cup_presence_recall",
+                "unet_cup_edge_valid_slices", "unet_cup_left_edge_mae_um",
+                "unet_cup_right_edge_mae_um", "unet_cup_width_mae_um",
+                "raw_cup_edge_valid_slices", "raw_cup_left_edge_mae_um",
+                "raw_cup_right_edge_mae_um", "raw_cup_width_mae_um",
+            ]
+            writer = csv.DictWriter(f, fieldnames=fields)
+            writer.writeheader()
+            for result in cohort_results:
+                if result.is_mirror:
+                    status = "unedited_mirror"
+                elif result.bad_dice is None:
+                    status = "missing_raw_annotation"
+                elif result.audit_edited_columns > 0:
+                    status = "material_edits"
+                else:
+                    status = "no_material_edits"
+                row = {field: getattr(result, field, None) for field in fields if field != "pairing_status"}
+                row["pairing_status"] = status
+                writer.writerow(row)
+        print(f"[Cohort Pipeline] Audit-correction analysis saved to: {correction_csv}")
 
         review_rows = [r for r in cohort_results if r.qc_status == "manual_review"]
         review_json = os.path.join(self.assets_dir, "manual_review_queue.json")

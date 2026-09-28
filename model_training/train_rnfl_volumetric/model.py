@@ -73,11 +73,13 @@ class VolumetricRNFLNet(nn.Module):
         strides=(2, 2, 2, 2),
         num_res_units=2,
         axial_height=768,
-        width=320
+        width=320,
+        use_laterality_embedding=False
     ):
         super().__init__()
         self.axial_height = axial_height
         self.width = width
+        self.use_laterality_embedding = use_laterality_embedding
 
         # U-Net Backbone
         self.backbone = UNet(
@@ -89,23 +91,32 @@ class VolumetricRNFLNet(nn.Module):
             num_res_units=num_res_units
         )
 
+        # Optional Laterality Conditioning Embedding
+        if use_laterality_embedding:
+            self.eye_emb = nn.Embedding(2, base_channels)
+
         # Dense Mask Output Head
         self.mask_head = nn.Conv2d(base_channels, 1, kernel_size=1)
 
         # Boundary Regression & Cup Absence Head
         self.boundary_head = BoundaryRegressionHead(in_channels=base_channels, width=width)
 
-    def forward(self, x):
+    def forward(self, x, eye_idx=None):
         """
         x: (B, context_slices, H, W)
+        eye_idx: (B,) long tensor (0=OD, 1=OS), optional
         Returns:
             mask_logits: (B, 1, H, W)
             ilm_pred:    (B, W) in pixel row units
             nfl_pred:    (B, W) in pixel row units
             cup_logits:  (B, W) logits for cup absence
-            soft_surfaces: dict with differentiable surfaces derived from mask_logits
+            column_thickness: (B, W) differentiable column thickness
         """
         feats = self.backbone(x)  # (B, base_channels, H, W)
+        if self.use_laterality_embedding and eye_idx is not None:
+            emb = self.eye_emb(eye_idx).unsqueeze(-1).unsqueeze(-1)
+            feats = feats + emb
+
         mask_logits = self.mask_head(feats)  # (B, 1, H, W)
 
         # Explicit 1D regression heads (scaled to height)

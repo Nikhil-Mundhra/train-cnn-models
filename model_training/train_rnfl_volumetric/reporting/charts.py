@@ -63,7 +63,7 @@ def render_statistical_raincloud_chart(scans: List[Dict[str, Any]], out_path: st
         ("RNFL Dice similarity", "unet_dice", "Dice score", False, 0.85, "Operational reference: 0.85"),
         ("Peripapillary MABE", "unet_mabe", "MABE (µm, log scale)", True, 5.0, "Operational reference: 5 µm"),
         ("Worst-case P95 error", "unet_p95", "P95 error (µm, log scale)", True, None, None),
-        ("Optic cup cavity IoU", "unet_cup_iou", "Cup IoU", False, 0.90, "Operational reference: 0.90"),
+        ("NFL-absence cup-region IoU", "unet_cup_iou", "Cup-region IoU", False, 0.90, "Operational reference: 0.90"),
     ]
 
     fig, axes = plt.subplots(2, 2, figsize=(16, 12), facecolor=pal["fig_face"])
@@ -101,9 +101,9 @@ def render_statistical_raincloud_chart(scans: List[Dict[str, Any]], out_path: st
             med_val = np.median(vals)
             q1, q3 = np.percentile(vals, [25, 75])
             if m_key in ("unet_dice", "unet_cup_iou"):
-                stat_str = f"n={len(vals)}  {med_val:.3f}\nIQR {q1:.3f}–{q3:.3f}"
+                stat_str = f"n={len(vals)}  {med_val:.3f}\nIQR {q1:.3f}-{q3:.3f}"
             else:
-                stat_str = f"n={len(vals)}  {med_val:.1f} µm\nIQR {q1:.1f}–{q3:.1f}"
+                stat_str = f"n={len(vals)}  {med_val:.1f} µm\nIQR {q1:.1f}-{q3:.1f}"
             ax.text(
                 g_idx, 0.975, stat_str, transform=ax.get_xaxis_transform(),
                 color=pal["text"], fontsize=8.2, fontweight="bold", ha="center", va="top",
@@ -220,7 +220,7 @@ def render_complete_scan_forest_chart(scans: List[Dict[str, Any]], out_path: str
     ]
     for ax, title, xlabel in [
         (ax2, "RNFL Dice", "Dice (higher is better)"),
-        (ax3, "Cup termination", "Cup IoU (higher is better)"),
+        (ax3, "NFL-absence cup region", "IoU (higher is better)"),
     ]:
         ax.set_title(title, color=pal["text"], fontsize=13, fontweight="bold", pad=12)
         ax.set_xlabel(xlabel, color=pal["subtext"], fontsize=10.5, fontweight="bold")
@@ -249,95 +249,95 @@ def render_complete_scan_forest_chart(scans: List[Dict[str, Any]], out_path: str
 
 def render_baseline_comparison_chart(scans: List[Dict[str, Any]], out_path: str, theme: str = "light") -> Optional[str]:
     """
-    Figure 3: Head-to-Head Comparative Delta: U-Net vs Commercial Baseline.
+    Figure 3: Edit-focused audit correction analysis.
     Supports clean publication white theme (for PDFs) and dark theme.
     """
     pal = get_theme_palette(theme)
-    bad_scans = [s for s in scans if s.get('bad_dice') is not None and not s.get('is_mirror', False)]
-    if not bad_scans:
+    edited_scans = [
+        s for s in scans
+        if s.get('raw_edit_mabe_um') is not None
+        and s.get('unet_edit_mabe_um') is not None
+        and s.get('audit_edited_columns', 0) > 0
+        and not s.get('is_mirror', False)
+    ]
+    if not edited_scans:
         return None
 
-    bad_scans = sorted(bad_scans, key=lambda s: s['unet_dice'] - s['bad_dice'], reverse=True)
-    n = len(bad_scans)
+    edited_scans = sorted(edited_scans, key=lambda s: s['audit_correction_gain'], reverse=True)
+    n = len(edited_scans)
     y_pos = np.arange(n)
-    labels = [f"{s['subject']} ({s['eye']})" for s in bad_scans]
+    labels = [f"{s['subject']} ({s['eye']})  n={s['audit_edited_columns']:,}" for s in edited_scans]
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, max(7.5, 0.55 * n + 2.5)), facecolor=pal["fig_face"])
-    ax1.set_facecolor(pal["ax_face"])
-    ax2.set_facecolor(pal["ax_face"])
+    fig, axes = plt.subplots(
+        1, 3, figsize=(18, max(7.5, 0.58 * n + 2.8)), sharey=True,
+        facecolor=pal["fig_face"], gridspec_kw={"width_ratios": [1.25, 1.0, 1.0], "wspace": 0.08}
+    )
+    ax1, ax2, ax3 = axes
+    for ax in axes:
+        ax.set_facecolor(pal["ax_face"])
 
-    u_dices = [s['unet_dice'] for s in bad_scans]
-    b_dices = [s['bad_dice'] for s in bad_scans]
-    u_cups = [s['unet_cup_iou'] for s in bad_scans]
-    b_cups = [s.get('bad_cup_iou') for s in bad_scans]
+    raw_errors = [s['raw_edit_mabe_um'] for s in edited_scans]
+    unet_errors = [s['unet_edit_mabe_um'] for s in edited_scans]
+    gains = [s['audit_correction_gain'] for s in edited_scans]
+    preservation = [s.get('audit_unchanged_preservation_rate') for s in edited_scans]
 
-    def delta_summary(deltas: List[float]) -> str:
-        values = np.asarray(deltas, dtype=float)
-        rng = np.random.default_rng(20260927)
-        boot = np.median(rng.choice(values, size=(5000, len(values)), replace=True), axis=1)
-        lo, hi = np.percentile(boot, [2.5, 97.5])
-        tol = 1e-12
-        wins = int(np.sum(values > tol))
-        losses = int(np.sum(values < -tol))
-        ties = len(values) - wins - losses
-        return f"median Δ {np.median(values):+.3f} [95% CI {lo:+.3f}, {hi:+.3f}]\n{wins} better | {ties} tied | {losses} worse"
-
-    # --- Left: Dice Paired Dumbbell ---
+    # --- Left: error only where the clinician materially edited the raw surface. ---
     for i in range(n):
-        diff = u_dices[i] - b_dices[i]
-        line_color = pal["unet_color"] if diff > 0 else (pal["bad_color"] if diff < 0 else pal["spine"])
-        ax1.hlines(y_pos[i], b_dices[i], u_dices[i], color=line_color, alpha=0.65, linewidth=2.0)
-        ax1.scatter(b_dices[i], y_pos[i], color=pal["bad_color"], s=75, marker="o", edgecolors="white" if theme == "dark" else pal["ax_face"], linewidths=0.9, zorder=3)
-        ax1.scatter(u_dices[i], y_pos[i], color=pal["unet_color"], s=85, marker="s", edgecolors="white" if theme == "dark" else pal["ax_face"], linewidths=0.9, zorder=4)
-        ax1.text(1.025, y_pos[i], f"{diff:+.3f}", color=line_color, fontsize=8.5, va="center", ha="right", fontweight="bold")
+        improved = unet_errors[i] < raw_errors[i]
+        line_color = pal["unet_color"] if improved else pal["bad_color"]
+        ax1.hlines(y_pos[i], raw_errors[i], unet_errors[i], color=line_color, alpha=0.7, linewidth=2.0)
+        ax1.scatter(raw_errors[i], y_pos[i], color=pal["bad_color"], s=72, marker="o", zorder=3)
+        ax1.scatter(unet_errors[i], y_pos[i], color=pal["unet_color"], s=82, marker="s", zorder=4)
 
-    leg1 = [
-        Line2D([0], [0], marker='o', color='w', markerfacecolor=pal["bad_color"], markersize=9, label='Commercial Baseline'),
-        Line2D([0], [0], marker='s', color='w', markerfacecolor=pal["unet_color"], markersize=9, label='Volumetric U-Net (Bi-Planar)')
-    ]
-    dice_deltas = [u - b for u, b in zip(u_dices, b_dices)]
-    ax1.set_title("RNFL Dice: paired change\n" + delta_summary(dice_deltas), color=pal["text"], fontsize=11.5, fontweight="bold", pad=12)
-    ax1.set_xlabel("Peripapillary Dice Overlap", color=pal["subtext"], fontsize=10.5, fontweight="bold")
+    ax1.set_title("Boundary error on clinician-edited columns", color=pal["text"], fontsize=11.5, fontweight="bold", pad=12)
+    ax1.set_xlabel("MABE (µm; lower is better)", color=pal["subtext"], fontsize=10.5, fontweight="bold")
     ax1.set_yticks(y_pos)
     ax1.set_yticklabels(labels, color=pal["text"], fontsize=9.5, fontweight="bold")
-    ax1.set_xlim(0.55, 1.03)
+    ax1.set_xlim(0, max(raw_errors + unet_errors) * 1.12)
     ax1.grid(axis="x", color=pal["grid"], linestyle="--", alpha=0.7)
-    ax1.tick_params(colors=pal["tick"])
-    for spine in ax1.spines.values():
-        spine.set_color(pal["spine"])
 
-    # --- Right: Cup IoU Paired Dumbbell ---
+    # --- Middle: normalized correction gain. ---
     for i in range(n):
-        if b_cups[i] is not None:
-            diff_cup = u_cups[i] - b_cups[i]
-            line_color = pal["unet_color"] if diff_cup > 0 else (pal["bad_color"] if diff_cup < 0 else pal["spine"])
-            ax2.hlines(y_pos[i], b_cups[i], u_cups[i], color=line_color, alpha=0.75, linewidth=2.0)
-            ax2.scatter(b_cups[i], y_pos[i], color=pal["bad_color"], s=75, marker="o", edgecolors="white" if theme == "dark" else pal["ax_face"], linewidths=0.9, zorder=3)
-            ax2.text(1.025, y_pos[i], f"{diff_cup:+.3f}", color=line_color, fontsize=8.5, va="center", ha="right", fontweight="bold")
-        ax2.scatter(u_cups[i], y_pos[i], color=pal["cup_color"], s=85, marker="D", edgecolors="white" if theme == "dark" else pal["ax_face"], linewidths=0.9, zorder=4)
-
-    leg2 = [
-        Line2D([0], [0], marker='o', color='w', markerfacecolor=pal["bad_color"], markersize=9, label='Commercial Cup IoU'),
-        Line2D([0], [0], marker='D', color='w', markerfacecolor=pal["cup_color"], markersize=9, label='U-Net Cup IoU (1D Regression)')
-    ]
-    cup_deltas = [u - b for u, b in zip(u_cups, b_cups) if b is not None]
-    ax2.set_title("Optic cup IoU: paired change\n" + delta_summary(cup_deltas), color=pal["text"], fontsize=11.5, fontweight="bold", pad=12)
-    ax2.set_xlabel("Cup Cavity IoU", color=pal["subtext"], fontsize=10.5, fontweight="bold")
-    ax2.set_yticks(y_pos)
-    ax2.set_yticklabels([])
-    ax2.set_xlim(0.50, 1.03)
+        color = pal["unet_color"] if gains[i] > 0 else pal["bad_color"]
+        ax2.barh(y_pos[i], gains[i] * 100.0, color=color, alpha=0.85, height=0.55)
+        ax2.text(gains[i] * 100.0, y_pos[i], f" {gains[i] * 100:+.0f}%", color=pal["text"], fontsize=8.5, va="center")
+    ax2.axvline(0, color=pal["spine"], linewidth=1.4)
+    ax2.set_title("Clinician-correction gain", color=pal["text"], fontsize=11.5, fontweight="bold", pad=12)
+    ax2.set_xlabel("1 - (U-Net error / raw error), %", color=pal["subtext"], fontsize=10.0, fontweight="bold")
     ax2.grid(axis="x", color=pal["grid"], linestyle="--", alpha=0.7)
-    fig.legend(handles=leg1 + leg2, facecolor=pal["legend_fc"], edgecolor=pal["legend_ec"],
-               labelcolor=pal["legend_text"], loc="lower center", bbox_to_anchor=(0.5, 0.035),
-               fontsize=8.8, ncol=4)
-    ax2.tick_params(colors=pal["tick"])
-    for spine in ax2.spines.values():
-        spine.set_color(pal["spine"])
 
-    plt.suptitle(f"U-Net vs Commercial Baseline: {n} Scans with Paired Commercial Annotations", color=pal["text"], fontsize=15, fontweight="bold", y=0.99)
-    fig.text(0.5, 0.008, "Rows are sorted by Dice Δ. Positive Δ favours the U-Net; red connectors indicate deterioration.",
+    # --- Right: fidelity where the clinician accepted the raw boundary. ---
+    for i, value in enumerate(preservation):
+        if value is None:
+            continue
+        ax3.barh(y_pos[i], value * 100.0, color=pal["cup_color"], alpha=0.85, height=0.55)
+        ax3.text(value * 100.0, y_pos[i], f" {value * 100:.0f}%", color=pal["text"], fontsize=8.5, va="center")
+    ax3.set_xlim(0, 105)
+    ax3.set_title("Unchanged-region preservation", color=pal["text"], fontsize=11.5, fontweight="bold", pad=12)
+    ax3.set_xlabel("Columns within 1 px of audit, %", color=pal["subtext"], fontsize=10.0, fontweight="bold")
+    ax3.grid(axis="x", color=pal["grid"], linestyle="--", alpha=0.7)
+
+    for ax in axes:
+        ax.set_yticks(y_pos)
+        if ax is not ax1:
+            ax.tick_params(axis="y", labelleft=False)
+        ax.tick_params(colors=pal["tick"])
+        for spine in ax.spines.values():
+            spine.set_color(pal["spine"])
+    ax1.invert_yaxis()
+
+    legend = [
+        Line2D([0], [0], marker='o', color='none', markerfacecolor=pal["bad_color"], markersize=9, label='Raw commercial'),
+        Line2D([0], [0], marker='s', color='none', markerfacecolor=pal["unet_color"], markersize=9, label='Volumetric U-Net'),
+    ]
+    fig.legend(handles=legend, facecolor=pal["legend_fc"], edgecolor=pal["legend_ec"],
+               labelcolor=pal["legend_text"], loc="lower center", bbox_to_anchor=(0.5, 0.035), fontsize=9, ncol=2)
+
+    threshold = edited_scans[0].get('audit_edit_threshold_px', 1.0)
+    plt.suptitle(f"Audit-Correction Analysis: {n} Scans with Material Clinician Edits", color=pal["text"], fontsize=15, fontweight="bold", y=0.99)
+    fig.text(0.5, 0.008, f"Edited columns differ by at least {threshold:g} px between raw and audit. Positive correction gain favours the U-Net; n is the number of edited columns.",
              color=pal["subtext"], fontsize=9, ha="center")
-    plt.tight_layout(rect=[0, 0.075, 1, 0.94])
+    plt.tight_layout(rect=[0, 0.075, 1, 0.95])
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     plt.savefig(out_path, dpi=200, facecolor=pal["fig_face"], bbox_inches="tight")
     plt.close(fig)
@@ -358,7 +358,7 @@ def render_cohort_summary_chart(scans: List[Dict[str, Any]], out_path: str, them
     metrics = [
         ("unet_dice", "bad_dice", "RNFL Dice", "Dice (higher is better)", (0.78, 1.01), 0.85),
         ("unet_mabe", "bad_mabe", "Boundary error", "MABE (µm; lower is better)", (0.0, max(s['unet_mabe'] for s in od_scans) * 1.12), 5.0),
-        ("unet_cup_iou", "bad_cup_iou", "Cup termination", "Cup IoU (higher is better)", (0.55, 1.01), 0.90),
+        ("unet_cup_iou", "bad_cup_iou", "NFL-absence cup region", "IoU (higher is better)", (0.55, 1.01), 0.90),
     ]
 
     for ax, (u_key, b_key, title, xlabel, xlim, threshold) in zip(axes, metrics):
