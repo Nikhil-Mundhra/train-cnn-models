@@ -13,7 +13,7 @@
 #SBATCH -n 1                           # 1 task
 #SBATCH -c 8                           # 8 CPU cores for data loading
 #SBATCH --mem=32G                      # 32 GB system memory
-#SBATCH -t 08:00:00                    # Wall clock time limit (8 hours for expanded cohort)
+#SBATCH -t 06:00:00                    # Wall clock time limit (6 hours)
 #SBATCH -J rnfl_dual_models            # Job name
 #SBATCH -o slurm_rnfl_%j.out           # Standard output log (%j expands to jobID)
 #SBATCH -e slurm_rnfl_%j.err           # Standard error log
