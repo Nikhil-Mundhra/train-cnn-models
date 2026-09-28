@@ -13,7 +13,7 @@
 #SBATCH -n 1                           # 1 task
 #SBATCH -c 8                           # 8 CPU cores for data loading
 #SBATCH --mem=32G                      # 32 GB system memory
-#SBATCH -t 04:00:00                    # Wall clock time limit (4 hours)
+#SBATCH -t 08:00:00                    # Wall clock time limit (8 hours for expanded cohort)
 #SBATCH -J rnfl_dual_models            # Job name
 #SBATCH -o slurm_rnfl_%j.out           # Standard output log (%j expands to jobID)
 #SBATCH -e slurm_rnfl_%j.err           # Standard error log
@@ -85,7 +85,7 @@ else
     echo "[Step 1.1] Training Light Volumetric U-Net (20 Epochs)..."
     "${PYTHON_BIN}" "${TRAIN_SCRIPT}" \
         --dataset_root "${DATASET_ROOT}" \
-        --val_subjects "BEH0335,BEH0314,BEH0086" \
+        --val_subjects "BEH0335,BEH0314,BEH0174,BEH0310,BEH0354,BEH0086,BEH0090,BEH0096,BEH0241,BEH0284" \
         --epochs 20 \
         --base_channels 16 \
         --batch_size 32 \
@@ -111,7 +111,7 @@ echo "[Step 1.2] Evaluating Light Model on GPU across cohort..."
     --checkpoint "${BEST_MODEL_LIGHT}" \
     --dataset_root "${DATASET_ROOT}" \
     --output_dir "${REPORT_DIR_LIGHT}" \
-    --val_subjects "BEH0335,BEH0314,BEH0086" \
+    --val_subjects "BEH0335,BEH0314,BEH0174,BEH0310,BEH0354,BEH0086,BEH0090,BEH0096,BEH0241,BEH0284" \
     --os_orientation_mode "corrected" \
     --device "cuda"
 
@@ -148,7 +148,7 @@ mkdir -p "${ASSETS_DIR_HEAVY}"
 echo "[Step 2.1] Training Heavy Volumetric U-Net (20 Epochs)..."
 "${PYTHON_BIN}" "${TRAIN_SCRIPT}" \
     --dataset_root "${DATASET_ROOT}" \
-    --val_subjects "BEH0335,BEH0314,BEH0086" \
+    --val_subjects "BEH0335,BEH0314,BEH0174,BEH0310,BEH0354,BEH0086,BEH0090,BEH0096,BEH0241,BEH0284" \
     --epochs 20 \
     --base_channels 32 \
     --batch_size 32 \
@@ -173,7 +173,7 @@ echo "[Step 2.2] Evaluating Heavy Model on GPU across cohort..."
     --checkpoint "${BEST_MODEL_HEAVY}" \
     --dataset_root "${DATASET_ROOT}" \
     --output_dir "${REPORT_DIR_HEAVY}" \
-    --val_subjects "BEH0335,BEH0314,BEH0086" \
+    --val_subjects "BEH0335,BEH0314,BEH0174,BEH0310,BEH0354,BEH0086,BEH0090,BEH0096,BEH0241,BEH0284" \
     --os_orientation_mode "corrected" \
     --device "cuda"
 

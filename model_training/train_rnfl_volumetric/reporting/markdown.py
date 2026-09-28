@@ -191,6 +191,31 @@ span[style*="#d97706"] code, span[style*="#d97706"] {{
         break-inside: avoid !important;
         margin-bottom: 10px !important;
     }}
+    .evidence-context {{
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+    }}
+    .evidence-table {{
+        table-layout: fixed !important;
+        font-size: 9.25px !important;
+        line-height: 1.28 !important;
+        margin: 8px 0 10px 0 !important;
+    }}
+    .evidence-table th, .evidence-table td {{
+        padding: 4px 5px !important;
+        vertical-align: top !important;
+        overflow-wrap: anywhere !important;
+    }}
+    .evidence-note {{
+        background: #fff7ed !important;
+        border-left: 4px solid #f97316 !important;
+        padding: 7px 9px !important;
+        margin: 8px 0 !important;
+        font-size: 9.5px !important;
+        line-height: 1.35 !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+    }}
     .gallery-grid {{
         display: block !important;
         page-break-inside: auto !important;
@@ -228,23 +253,23 @@ span[style*="#d97706"] code, span[style*="#d97706"] {{
 
 # Volumetric RNFL Segmentation ({model_variant} Model): Multi-Subject Cohort Report
 
-**Cohort Scope**: {len(all_subjects)} Subjects ({subj_range_str}) | {n_scans} OCT Volumes ({n_od} OD + {n_os} OS)  
-**Modality**: Optovue Solix OCT `Disc Cube` ($320 \\times 768 \\times 320$ voxels; $18.81\\,\\mu\\text{{m}} \\times 3.12\\,\\mu\\text{{m}} \\times 18.75\\,\\mu\\text{{m}}$)  
+**Cohort Scope**: {len(all_subjects)} Subjects ({subj_range_str}) | {n_scans} OCT Volumes ({n_od} OD + {n_os} OS)<br>
+**Modality**: Optovue Solix OCT `Disc Cube` ($320 \\times 768 \\times 320$ voxels; $18.81\\,\\mu\\text{{m}} \\times 3.12\\,\\mu\\text{{m}} \\times 18.75\\,\\mu\\text{{m}}$)<br>
 **Checkpoint Provenance**: NYUAD HPC Jubail (SLURM Job `{job_id}`) | Checkpoint: `{checkpoint_name}`<br>
 **Evaluation Runtime**: Local Apple MPS corrected-cohort rerun<br>
-**Architecture / Variant**: **{model_variant} Architecture** ({model_desc})  
+**Architecture / Variant**: **{model_variant} Architecture** ({model_desc})<br>
 **Inference Policy**: Corrected OS native-coordinate restoration before horizontal/vertical biplanar fusion
 
 **Evaluation Arms**:
 
-- **<span style="color: #0284c7; font-weight: bold;">Cyan</span>**: Clinician-Corrected Reference Algorithm (Good Arm)
+- **<span style="color: #0284c7; font-weight: bold;">Cyan</span>**: Human-Corrected Reference (Good Arm)
 - **<span style="color: #dc2626; font-weight: bold;">Red</span>**: Commercial Solix Heuristic Baseline (Bad Arm)
 - **<span style="color: #16a34a; font-weight: bold;">Green</span>**: Multi-Task Volumetric U-Net ({model_variant} Model, 2.5D Context + Continuous 1D Boundary Regression)
 - **<span style="color: #ea580c; font-weight: bold;">Orange</span>**: Held-Out Validation Cohort (<span style="color: #ea580c; font-weight: bold;">{val_subjs_str}</span>, {len(val_scans)} Scans Unseen During Training)
 
 ## 1. Executive Summary
 
-This report delivers an automated cohort-wide comparative evaluation of the **Multi-Task Volumetric RNFL U-Net (<span style="color: #16a34a; font-weight: bold;">Green</span>)** against the **Clinician Reference Algorithm (<span style="color: #0284c7; font-weight: bold;">Cyan</span>)** and the **Commercial Solix Baseline (<span style="color: #dc2626; font-weight: bold;">Red</span>)** across {len(all_subjects)} subjects ({n_scans} eye-level OCT volumes). The checkpoint was trained on NYUAD Jubail and this corrected cohort evaluation was executed locally on Apple MPS.
+This report delivers an automated cohort-wide comparative evaluation of the **Multi-Task Volumetric RNFL U-Net (<span style="color: #16a34a; font-weight: bold;">Green</span>)** against the **Human-Corrected Reference (<span style="color: #0284c7; font-weight: bold;">Cyan</span>)** and the **Commercial Solix Baseline (<span style="color: #dc2626; font-weight: bold;">Red</span>)** across {len(all_subjects)} subjects ({n_scans} eye-level OCT volumes). The checkpoint was trained on NYUAD Jubail and this corrected cohort evaluation was executed locally on Apple MPS.
 
 <div class="kpi-grid">
     <div class="kpi-card">
@@ -274,7 +299,7 @@ This report delivers an automated cohort-wide comparative evaluation of the **Mu
 1. **Laterality Stability After Coordinate Correction**: Benchmark OD median MABE was **${stats_bench_od_mabe['median']:.2f} \\; \\mu\\text{{m}}$** with median Dice **${stats_bench_od_dice['median']:.4f}$**; benchmark OS median MABE was **${stats_bench_os_mabe['median']:.2f} \\; \\mu\\text{{m}}$** with median Dice **${stats_bench_os_dice['median']:.4f}$**. The previous cohort-wide OS collapse was an inference-coordinate defect, not a supported model finding.
 2. **Held-Out Failure Is Subject-Specific**: Across the {len(val_scans)} held-out acquisitions ({val_subjs_str}), median MABE was **${stats_val_mabe['median']:.2f} \\; \\mu\\text{{m}}$**. The worst held-out scan was **{worst_val_label}** at **${worst_val_mabe:.2f} \\; \\mu\\text{{m}}$**; pooled validation statistics therefore require scan-level review.
 3. **Not Ready for Autonomous Clinical Use**: {qc_finding} These engineering thresholds are not clinically validated, but residual Dice, cup-IoU, and boundary-error failures require mandatory human review.
-4. **Audit-Correction Performance**: {len(audit_edited_scans)} scans contained material clinician edits of at least {audit_threshold_px:g} px. The U-Net reduced raw boundary error in {audit_improved} scans, with median correction gain **{audit_gain_median * 100:+.1f}%** and median edited-column recovery rate **{audit_recovery_median * 100:.1f}%**. This edit-focused analysis is primary; whole-mask commercial Dice is reference-dependent and descriptive only.
+4. **Audit-Correction Performance**: {len(audit_edited_scans)} scans contained material human edits of at least {audit_threshold_px:g} px. The U-Net reduced raw boundary error in {audit_improved} scans, with median correction gain **{audit_gain_median * 100:+.1f}%** and median edited-column recovery rate **{audit_recovery_median * 100:.1f}%**. This edit-focused analysis is primary; whole-mask commercial Dice is reference-dependent and descriptive only.
 
 ---
 
@@ -286,11 +311,11 @@ This report delivers an automated cohort-wide comparative evaluation of the **Mu
 - **Voxel Pitch**: $18.81\\,\\mu\\text{{m}}$ (slow B-scan pitch) $\\times 3.12\\,\\mu\\text{{m}}$ (axial depth) $\\times 18.75\\,\\mu\\text{{m}}$ (fast A-scan pitch).
 
 ### 2.2 Evaluation Metrics
-- **Dice Similarity Coefficient**: Spatial overlap between predicted and clinician-audited binary RNFL masks. It is a secondary consistency endpoint because unchanged regions dominate whole-mask overlap.
+- **Dice Similarity Coefficient**: Spatial overlap between predicted and human-audited binary RNFL masks. It is a secondary consistency endpoint because unchanged regions dominate whole-mask overlap.
 - **Mean Absolute Boundary Error (MABE)**: Mean axial displacement outside the optic cup cavity in $\\mu\\text{{m}}$ ($3.12367\\,\\mu\\text{{m}}/\\text{{px}}$).
 - **95th Percentile Boundary Error ($P_{{95}}$)**: Localized worst-case boundary drift in $\\mu\\text{{m}}$.
-- **Audit-Correction Gain**: One minus the ratio of U-Net error to raw error on columns where the raw and audited NFL boundaries differ by at least {audit_threshold_px:g} px. Positive values indicate recovery of clinician corrections.
-- **Unchanged-Region Preservation**: Fraction of clinician-accepted columns where the U-Net remains within 1 px of the audited NFL boundary.
+- **Audit-Correction Gain**: One minus the ratio of U-Net error to raw error on columns where the raw and audited NFL boundaries differ by at least {audit_threshold_px:g} px. Positive values indicate recovery of human corrections.
+- **Unchanged-Region Preservation**: Fraction of human-accepted columns where the U-Net remains within 1 px of the audited NFL boundary.
 - **NFL-Absence Cup-Region IoU**: Jaccard overlap of columns where the NFL boundary is absent. This is an annotation-derived cup-region endpoint, not a full anatomical cup segmentation.
 - **Cup-Edge Localization**: Horizontal left-edge, right-edge, and width errors on slices where both reference and prediction contain a detectable NFL-absence region.
 
@@ -320,13 +345,39 @@ The chart shows all {n_scans} eye-level scans ranked best to worst by MABE. MABE
 
 ### 3.3 Audit-Correction Analysis: U-Net vs Raw Commercial Boundary
 
-Whole-mask comparison is reference-dependent because the clinician-audited annotation was created by editing the raw commercial result. The primary comparator analysis therefore isolates columns with a raw-to-audit displacement of at least {audit_threshold_px:g} px. Across {len(audit_edited_scans)} materially edited scans, the U-Net reduced boundary error in {audit_improved}; median correction gain was **{audit_gain_median * 100:+.1f}%**, median edited-column recovery was **{audit_recovery_median * 100:.1f}%**, and median unchanged-region preservation was **{audit_preservation_median * 100:.1f}%**. Negative correction gain means the U-Net was farther from the audit than the raw boundary on edited columns.
+Whole-mask comparison is reference-dependent because the human-audited annotation was created by editing the raw commercial result. The primary comparator analysis therefore isolates columns with a raw-to-audit displacement of at least {audit_threshold_px:g} px. Across {len(audit_edited_scans)} materially edited scans, the U-Net reduced boundary error in {audit_improved}; median correction gain was **{audit_gain_median * 100:+.1f}%**, median edited-column recovery was **{audit_recovery_median * 100:.1f}%**, and median unchanged-region preservation was **{audit_preservation_median * 100:.1f}%**. Negative correction gain means the U-Net was farther from the audit than the raw boundary on edited columns.
 
 ![Audit-Correction Analysis]({assets_rel_dir}/baseline_vs_unet_head_to_head.png)
 
 ---
 
-## 4. OD Subject Statistical Overview
+## 4. External Evidence Context
+
+The closest published evidence spans different OCT devices, scan geometries, pathologies, reference standards, and aggregation methods. The table therefore positions the model rather than ranking it. The current-project row uses the **subject-disjoint held-out cohort**; training-cohort benchmark Dice is intentionally excluded from the cross-study comparison.
+
+<div class="evidence-context">
+<table class="evidence-table">
+<thead>
+<tr><th style="width: 18%;">Evidence</th><th style="width: 24%;">Evaluation setting</th><th style="width: 14%;">RNFL Dice</th><th style="width: 19%;">Other error endpoint</th><th style="width: 25%;">Comparability note</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Current model</strong></td><td>Optovue Solix Disc Cube; {len(val_subjects)} subjects / {len(val_scans)} eyes; full volumes; subject-disjoint held-out set</td><td><strong>Median {stats_val_dice['median']:.3f}</strong></td><td>Boundary MABE: <strong>{stats_val_mabe['median']:.2f} µm</strong> median; worst {worst_val_mabe:.2f} µm</td><td>Most relevant generalization result, but the sample is too small for a superiority or safety claim.</td></tr>
+<tr><td><a href="https://doi.org/10.1167/tvst.15.4.7">Arian et al., 2026</a></td><td>External Spectralis circular B-scans: Thailand glaucoma (n=157) and US edema (n=32)</td><td>Mean 0.858 / 0.845</td><td>Thickness MAE: 7.19 / 15.41 µm; lower-boundary MUE: 14.52 / 24.82 µm</td><td>Strong external clinical evidence, but 2D circles and thickness/boundary endpoints differ from the Solix volume evaluation.</td></tr>
+<tr><td><a href="https://arxiv.org/abs/2207.14447">GOALS, 2022</a></td><td>Topcon DRI circumpapillary B-scans; patient-disjoint challenge tests</td><td>0.816 / 0.843</td><td>Boundary MED: 4.06 / 4.15 pixels</td><td>High anatomical relevance and multi-grader reference; single 2D circles and no defensible µm conversion.</td></tr>
+<tr><td><a href="https://doi.org/10.1038/s41598-022-22135-x">Razaghi et al., 2022</a></td><td>Spectralis circular B-scans; 127 independent test eyes spanning healthy, NAION, and optic neuritis</td><td>0.870</td><td>Thickness MAE: 1.04-1.20 µm across groups</td><td>Independent same-device test; thickness MAE is not interchangeable with local boundary MABE.</td></tr>
+<tr><td><a href="https://doi.org/10.3389/fcell.2026.1890734">Qiu et al., 2026 (M2D)</a></td><td>1,017 Heidelberg/TowardPi circumpapillary scans; expert-corrected subset</td><td>Mean 0.874</td><td>Expert-subset thickness MAD: 1.8 µm</td><td>Cross-device evidence, but large-scale overlap primarily used proprietary output as the reference.</td></tr>
+<tr><td><a href="https://doi.org/10.18502/jovr.v18i1.12724">Razaghi et al., 2023</a></td><td>SD-OCT B-scans; 50-image internal test; subject separation unclear</td><td>0.910</td><td>Thickness MAE: 2.23 ± 2.10 µm</td><td>Favorable internal result with a small image-level test; weaker generalization evidence.</td></tr>
+</tbody>
+</table>
+
+<div class="evidence-note"><strong>Interpretation:</strong> The held-out Dice of {stats_val_dice['median']:.3f} lies within the approximately 0.82-0.88 range reported in external or difficult peripapillary RNFL evaluations. This is evidence of technical plausibility, not equivalence or superiority. No directly comparable external Optovue Solix Disc Cube benchmark was identified, and Dice alone does not resolve the {worst_val_mabe:.2f} µm worst-case boundary failure.</div>
+</div>
+
+Values above retain each publication's original endpoint and aggregation. Mean and median values, full-volume and circular-scan evaluations, boundary and thickness errors, and human versus commercial-derived references must not be treated as interchangeable.
+
+---
+
+## 5. OD Subject Statistical Overview
 
 The aligned dot plots summarize the {n_od} OD acquisitions only. Dice, MABE, and Cup IoU use separate axes and operational thresholds. Commercial points appear only where an independent comparator is available; blank comparator positions represent missing annotations, not zero values.
 
@@ -334,9 +385,9 @@ The aligned dot plots summarize the {n_od} OD acquisitions only. Dice, MABE, and
 
 ---
 
-## 5. OD Subject Gallery: Reference vs U-Net
+## 6. OD Subject Gallery: Reference vs U-Net
 
-Central peripapillary OD B-scans ($z = z_{{\\text{{disc}}}}$) comparing the **Clinician Reference (<span style="color: #0284c7; font-weight: bold;">Cyan</span>)** with the **Volumetric U-Net (<span style="color: #16a34a; font-weight: bold;">Green</span>)**. The gallery contains one OD view per subject; OS acquisitions and the commercial baseline are not shown here.
+Central peripapillary OD B-scans ($z = z_{{\\text{{disc}}}}$) comparing the **Human-Corrected Reference (<span style="color: #0284c7; font-weight: bold;">Cyan</span>)** with the **Volumetric U-Net (<span style="color: #16a34a; font-weight: bold;">Green</span>)**. The gallery contains one OD view per subject; OS acquisitions and the commercial baseline are not shown here.
 
 <div class="gallery-grid">
 """
@@ -356,7 +407,7 @@ Central peripapillary OD B-scans ($z = z_{{\\text{{disc}}}}$) comparing the **Cl
 
 ---
 
-## 6. 3-Arm Deep-Dive Panels: Validation & Archetype Subjects
+## 7. 3-Arm Deep-Dive Panels: Validation & Archetype Subjects
 
 Detailed cross-sectional analysis comparing optical intensity boundaries, vertical cut behavior, and local layer transitions across key clinical archetypes.
 
@@ -373,43 +424,44 @@ Detailed cross-sectional analysis comparing optical intensity boundaries, vertic
 
 """
 
-    md += f"""## 7. Algorithmic Mechanics Driving Boundary Adherence
+    md += f"""## 8. Algorithmic Mechanics Driving Boundary Adherence
 
 <div class="challenge-grid">
     <div class="challenge-card">
         <div class="challenge-title">GCL Hyporeflective Wedge Penetration</div>
         <div class="challenge-row"><span class="badge-red">Solix Baseline</span> Plunges deeply into adjacent hyporeflective ganglion cell layer.</div>
         <div class="challenge-row"><span class="badge-green">Volumetric U-Net</span> Continuous 1D head locks onto true hyperreflective optical gradient.</div>
-        <div class="challenge-row"><span class="badge-cyan">Clinician Truth</span> Manually verified anatomical transition interface.</div>
+        <div class="challenge-row"><span class="badge-cyan">Human-Corrected Reference</span> Manually reviewed anatomical transition interface.</div>
     </div>
     <div class="challenge-card">
         <div class="challenge-title">Optic Cup Cavity Void & BMO Bridging</div>
         <div class="challenge-row"><span class="badge-red">Solix Baseline</span> Bridges straight across non-physiological empty cup void.</div>
         <div class="challenge-row"><span class="badge-green">Volumetric U-Net</span> 1D cup head accurately truncates margin at Bruch's Membrane Opening.</div>
-        <div class="challenge-row"><span class="badge-cyan">Clinician Truth</span> Strict peripapillary termination at anatomical BMO.</div>
+        <div class="challenge-row"><span class="badge-cyan">Human-Corrected Reference</span> Reviewed peripapillary termination at the annotated margin.</div>
     </div>
     <div class="challenge-card">
         <div class="challenge-title">Major Vessel Axial Shadowing</div>
         <div class="challenge-row"><span class="badge-red">Solix Baseline</span> Axial signal drop causes erratic vertical jumps and boundary loss.</div>
         <div class="challenge-row"><span class="badge-green">Volumetric U-Net</span> Multi-slice 2.5D contextual slices interpolate across vessel shadows cleanly.</div>
-        <div class="challenge-row"><span class="badge-cyan">Clinician Truth</span> Preserved continuous anatomical layer contours.</div>
+        <div class="challenge-row"><span class="badge-cyan">Human-Corrected Reference</span> Reviewed continuous layer contours.</div>
     </div>
     <div class="challenge-card">
         <div class="challenge-title">Pathological Disc Tilt & Steep Slope</div>
         <div class="challenge-row"><span class="badge-red">Solix Baseline</span> Steep regional gradients induce boundary distortion and clipping.</div>
         <div class="challenge-row"><span class="badge-green">Volumetric U-Net</span> Continuous 1D regression preserves curvature continuity and slope fidelity.</div>
-        <div class="challenge-row"><span class="badge-cyan">Clinician Truth</span> Verified anatomical boundary conformity.</div>
+        <div class="challenge-row"><span class="badge-cyan">Human-Corrected Reference</span> Reviewed boundary conformity.</div>
     </div>
 </div>
 
 ---
 
-## 8. Clinical Significance & Conclusion
+## 9. Clinical Significance & Conclusion
 
 1. **Comparable OD and OS Cohort Performance**: Corrected native-coordinate restoration removes the systematic OS artifact. Benchmark medians are closely aligned by eye, but laterality stability does not eliminate individual failures.
-2. **Residual Clinical Risk**: The worst held-out scan, {worst_val_label}, reached **${worst_val_mabe:.2f} \\; \\mu\\text{{m}}$** MABE, and additional scans miss Dice or cup-IoU operational limits. The model is suitable for research and clinician-assisted review, not autonomous clinical use.
-3. **Comparator Evidence Is Reference-Dependent**: The edit-focused analysis shows whether the U-Net recovers clinician changes without allowing unchanged pixels to dominate. It still cannot establish clinical superiority because the audit is not an independent second-reader reference.
-4. **Execution Summary**: Checkpoint `{checkpoint_name}` was evaluated using corrected biplanar inference. All visual assets, scan-level metrics, audit-correction fields, comparator missingness, and manual-review outputs are archived in `{assets_rel_dir}`.
+2. **Residual Clinical Risk**: The worst held-out scan, {worst_val_label}, reached **${worst_val_mabe:.2f} \\; \\mu\\text{{m}}$** MABE, and additional scans miss Dice or cup-IoU operational limits. The model is suitable for research and human-supervised review, not autonomous clinical use.
+3. **Comparator Evidence Is Reference-Dependent**: The edit-focused analysis shows whether the U-Net recovers human changes without allowing unchanged pixels to dominate. It still cannot establish clinical superiority because the audit is not an independent second-reader reference.
+4. **External Positioning**: Held-out Dice is within published external or difficult-cohort RNFL ranges, but cross-study differences and the small held-out cohort prevent a direct ranking or superiority claim.
+5. **Execution Summary**: Checkpoint `{checkpoint_name}` was evaluated using corrected biplanar inference. All visual assets, scan-level metrics, audit-correction fields, comparator missingness, and manual-review outputs are archived in `{assets_rel_dir}`.
 
 """
     return md

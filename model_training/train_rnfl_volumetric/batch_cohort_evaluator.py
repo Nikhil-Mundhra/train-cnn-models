@@ -2,7 +2,7 @@
 batch_cohort_evaluator.py
 ==========================
 Object-Oriented Comprehensive Batch Evaluator spanning all 11 Solix OCT subjects.
-Computes quantitative boundary & volumetric metrics against clinician ground truth (good)
+Computes quantitative boundary & volumetric metrics against the human-corrected reference (good)
 and commercial baseline (bad), and exports publication-ready comparative visual panels.
 """
 
@@ -46,6 +46,27 @@ from audit_analysis import (
 )
 
 AXIAL_RES_UM: float = 3.09
+
+
+def resolve_validation_subjects(checkpoint_path: str, requested: Optional[str] = None) -> List[str]:
+    """Resolve held-out subjects from an explicit override or checkpoint metadata."""
+    raw_subjects: Any = requested
+    if not raw_subjects:
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        if isinstance(checkpoint, dict):
+            raw_subjects = (checkpoint.get("args") or {}).get("val_subjects")
+    if not raw_subjects:
+        raise ValueError(
+            "Validation subjects are absent from the checkpoint metadata; "
+            "provide --val_subjects or --split_manifest explicitly."
+        )
+    if isinstance(raw_subjects, str):
+        subjects = [subject.strip() for subject in raw_subjects.split(",") if subject.strip()]
+    else:
+        subjects = [str(subject).strip() for subject in raw_subjects if str(subject).strip()]
+    if not subjects:
+        raise ValueError("Validation subject list resolved to an empty set")
+    return subjects
 
 
 # ============================================================================
@@ -156,7 +177,7 @@ class InferenceConfig:
 class OCTVolume:
     """
     Encapsulates a single patient OCT acquisition: DICOM raw data, ground truth
-    clinician curves, commercial baseline curves, and spatial disc geometry.
+    human-corrected curves, commercial baseline curves, and spatial disc geometry.
     """
 
     def __init__(
@@ -659,7 +680,7 @@ class ClinicalMetricsCalculator:
             for b_idx in range(oct_volume.n_bscans)
         ])
         audit_metrics = compute_audit_correction_metrics(
-            clinician_nfl=curves_good['NFL'],
+            human_nfl=curves_good['NFL'],
             raw_nfl=curves_bad['NFL'] if curves_bad is not None else None,
             predicted_nfl=prediction.nfl_curve,
             predicted_cup_probability=prediction.cup_probs,
@@ -1018,6 +1039,7 @@ class CohortEvaluatorPipeline:
                     'orientation_mode': self.os_orientation_mode,
                     'biplanar_fusion': self.biplanar_fusion,
                     'scan_count': len(cohort_results),
+                    'validation_subjects': sorted(self.val_subjects),
                     'qc_threshold_profile': 'Operational engineering defaults; thresholds are not clinically validated.',
                     'audit_edit_threshold_px': AUDIT_EDIT_THRESHOLD_PX,
                     'audit_unchanged_preservation_tolerance_px': PRESERVATION_TOLERANCE_PX,
@@ -1152,7 +1174,12 @@ def main():
     parser.add_argument("--checkpoint", type=str, required=True, help="Path to trained model checkpoint (.pt)")
     parser.add_argument("--dataset_root", type=str, default="/Users/nikhilmundhra/Library/CloudStorage/Box-Box/deidentified")
     parser.add_argument("--output_dir", type=str, default="/Users/nikhilmundhra/Documents/Github/Capstone/OCT-Analyser-Capstone/docs")
-    parser.add_argument("--val_subjects", type=str, default="BEH0335,BEH0314")
+    parser.add_argument(
+        "--val_subjects",
+        type=str,
+        default=None,
+        help="Optional comma-separated override. Defaults to the validation subjects stored in the checkpoint.",
+    )
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for volumetric inference")
     parser.add_argument("--disable_biplanar", dest="biplanar_fusion", action="store_false", help="Disable biplanar fusion")
     parser.set_defaults(biplanar_fusion=True)
@@ -1168,7 +1195,8 @@ def main():
     parser.add_argument("--eyes", type=str, default=None, help="Optional comma-separated eye filter (OD,OS).")
     args = parser.parse_args()
 
-    val_subjects = [s.strip() for s in args.val_subjects.split(",")]
+    val_subjects = resolve_validation_subjects(args.checkpoint, args.val_subjects)
+    print(f"[Cohort Pipeline] Validation subjects: {', '.join(val_subjects)}")
     subject_filter = [s.strip() for s in args.subjects.split(",") if s.strip()] if args.subjects else None
     eye_filter = [eye.strip().upper() for eye in args.eyes.split(",") if eye.strip()] if args.eyes else None
 

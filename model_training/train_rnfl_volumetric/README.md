@@ -2,7 +2,7 @@
 
 Automated deep learning model architecture and training pipeline for volumetric segmentation and boundary extraction of the **Retinal Nerve Fiber Layer (RNFL)** directly from Optovue Solix OCT DICOM volumes (`Disc Cube` and `Retina Cube`).
 
-Trained and benchmarked against human clinician-reviewed reference ground truth from:
+Trained and benchmarked against a human-reviewed reference from:
 `/Users/nikhilmundhra/Library/CloudStorage/Box-Box/deidentified`
 
 ---
@@ -16,7 +16,7 @@ Standard commercial segmentation algorithms (such as the Optovue Solix automated
 - Inaccurate tracking of the neuroretinal rim slopes.
 - Misidentifying the RNFL-GCL interface under blood vessel shadows.
 
-In this dataset, clinical experts reviewed and manually corrected the disc margin, generating the ground-truth reference (`good`). This deep learning pipeline trains a 2.5D multi-task residual network to learn the clinician-corrected boundaries and beat the commercial machine output.
+In this dataset, a human reviewer manually corrected the disc margin, generating the reference (`good`). This deep learning pipeline trains a 2.5D multi-task residual network to learn the human-corrected boundaries and improve on the commercial machine output.
 
 ---
 
@@ -138,7 +138,7 @@ export KMP_DUPLICATE_LIB_OK=TRUE
 ```bash
 .venv/bin/python model_training/train_rnfl_volumetric/train.py \
     --dataset_root "/Users/nikhilmundhra/Library/CloudStorage/Box-Box/deidentified" \
-    --val_subjects "BEH0335,BEH0314" \
+    --val_subjects "BEH0335,BEH0314,BEH0086" \
     --epochs 15 \
     --batch_size 4 \
     --accum_steps 2 \
@@ -148,7 +148,7 @@ export KMP_DUPLICATE_LIB_OK=TRUE
 
 #### Training Arguments:
 - `--dataset_root`: Path to deidentified Box dataset folder.
-- `--val_subjects`: Comma-separated subject IDs for validation. Must be split by subject to prevent B-scan data leakage across scans. Recommended: `BEH0335,BEH0314` (the subjects with the largest clinical disc margin corrections).
+- `--val_subjects`: Optional comma-separated validation override. Evaluation defaults to the subject-disjoint validation list stored in the checkpoint (`BEH0335,BEH0314,BEH0086` for job 18223981).
 - `--epochs`: Number of full passes through the training dataset (default: 15).
 - `--batch_size`: Physical batch size per step on Apple Silicon GPU (`mps`).
 - `--accum_steps`: Gradient accumulation steps (effective batch size = `batch_size * accum_steps = 8`).
@@ -244,5 +244,4 @@ Once training completes, download the best model weights back to your local mach
 mkdir -p ./checkpoints/jubail_run
 rsync -avhP nm4358@jubail.abudhabi.nyu.edu:/scratch/nm4358/checkpoints/rnfl_volumetric_*/best_volumetric_rnfl_net.pt ./checkpoints/jubail_run/
 ```
-
 

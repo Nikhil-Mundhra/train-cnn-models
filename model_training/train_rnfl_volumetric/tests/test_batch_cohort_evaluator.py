@@ -11,6 +11,7 @@ Comprehensive automated unit and regression test suite for batch_cohort_evaluato
 
 import os
 import sys
+import tempfile
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
@@ -35,6 +36,7 @@ from batch_cohort_evaluator import (
     OpticDiscCutConfig,
     InferenceConfig,
     AXIAL_RES_UM,
+    resolve_validation_subjects,
 )
 from model import VolumetricRNFLNet
 
@@ -86,6 +88,19 @@ class TestDataStructures(unittest.TestCase):
         pred = VolumePrediction(mask=mask, ilm_curve=ilm, nfl_curve=nfl, cup_probs=cup)
         self.assertEqual(pred.mask.shape, (10, 20, 20))
         self.assertEqual(pred.ilm_curve.shape, (10, 20))
+
+    def test_validation_subjects_default_to_checkpoint_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            checkpoint_path = os.path.join(tmp_dir, "checkpoint.pt")
+            torch.save({"args": {"val_subjects": "BEH0086,BEH0314,BEH0335"}}, checkpoint_path)
+            self.assertEqual(
+                resolve_validation_subjects(checkpoint_path),
+                ["BEH0086", "BEH0314", "BEH0335"],
+            )
+            self.assertEqual(
+                resolve_validation_subjects(checkpoint_path, "BEH0001,BEH0002"),
+                ["BEH0001", "BEH0002"],
+            )
 
 
 class TestOCTVolumeLogic(unittest.TestCase):

@@ -4,8 +4,8 @@ run_subject_evaluation.py
 Automated end-to-end evaluation runner for a single Solix OCT subject:
 1. Performs 2.5D context volumetric U-Net inference with continuous 1D surface boundary decoding.
 2. Applies anatomical optic disc vertical radius cut (1.85 mm vertical x 1.75 mm horizontal ellipse).
-3. Computes quantitative metrics (Dice, NFL MABE, NFL P95, Cup IoU) against clinician ground truth.
-4. Exports full 3D volumetric masks (.npz) for U-Net, Clinician GT, and Commercial Baseline.
+3. Computes quantitative metrics (Dice, NFL MABE, NFL P95, Cup IoU) against the human-corrected reference.
+4. Exports full 3D volumetric masks (.npz) for U-Net, Human Reference, and Commercial Baseline.
 5. Renders clinical comparative figures (Gallery and 6-panel Deep Dive).
 6. Generates 3D Slicer interactive scene script and optionally launches 3D Slicer.
 """
@@ -63,7 +63,7 @@ def generate_slicer_script(
 view_prediction_in_slicer.py
 ============================
 Interactive 3D Slicer loader for Subject {subject} ({eye}) with Volumetric U-Net RNFL Segmentation.
-Includes optional toggleable Clinician Ground Truth and Commercial Solix Baseline layers.
+Includes optional toggleable Human-Corrected Reference and Commercial Solix Baseline layers.
 """
 
 import os
@@ -127,9 +127,9 @@ if unet_disp:
     unet_disp.SetVisibility3D(True)
     unet_disp.SetOpacity3D(0.85)
 
-# 3. Load Clinician-Corrected Ground Truth (Good Reference Arm - Cyan, toggleable)
+# 3. Load Human-Corrected Reference (Good Reference Arm - Cyan, toggleable)
 if os.path.exists(GOOD_NPZ):
-    print("Loading Clinician Ground Truth mask...")
+    print("Loading Human-Corrected Reference mask...")
     gt_data = np.load(GOOD_NPZ)
     gt_mask = gt_data["rnfl_mask"]
 
@@ -139,7 +139,7 @@ if os.path.exists(GOOD_NPZ):
     slicer.util.updateVolumeFromArray(label_vol_gt, gt_mask.astype(np.int16))
 
     gt_seg_node = slicer.mrmlScene.AddNewNodeByClass(
-        "vtkMRMLSegmentationNode", "Clinician_Ground_Truth"
+        "vtkMRMLSegmentationNode", "Human_Corrected_Reference"
     )
     slicer.modules.segmentations.logic().ImportLabelmapToSegmentationNode(
         label_vol_gt, gt_seg_node
@@ -147,7 +147,7 @@ if os.path.exists(GOOD_NPZ):
     slicer.mrmlScene.RemoveNode(label_vol_gt)
 
     gt_seg = gt_seg_node.GetSegmentation().GetNthSegment(0)
-    gt_seg.SetName("RNFL (Clinician Ground Truth - Good)")
+    gt_seg.SetName("RNFL (Human-Corrected Reference - Good)")
     gt_seg.SetColor(0.0, 0.8, 1.0)  # Vibrant Cyan
 
     gt_seg_node.CreateClosedSurfaceRepresentation()
@@ -204,7 +204,7 @@ if layout_mgr:
 
 print("=" * 70)
 print("SUCCESS: {subject} {eye} loaded live in 3D Slicer with U-Net mask (Green)!")
-print("Clinician Ground Truth (Cyan) and Commercial Solix (Red) available in Segmentations module.")
+print("Human-Corrected Reference (Cyan) and Commercial Solix (Red) available in Segmentations module.")
 print("=" * 70)
 '''
     with open(slicer_script_path, "w") as f:
@@ -277,7 +277,7 @@ def main():
     print(f"  Total U-Net segmented RNFL voxels: {np.sum(prediction.mask == 1):,}")
 
     # 3. Quantitative Evaluation
-    print("\n[3/6] Computing quantitative metrics against clinician ground truth...")
+    print("\n[3/6] Computing quantitative metrics against the human-corrected reference...")
     calc = ClinicalMetricsCalculator()
     eval_result = calc.evaluate_scan(oct_volume, prediction)
 
@@ -313,7 +313,7 @@ def main():
     if good_xml:
         gt_mask = rasterize_full_volume(oct_volume, "good")
         np.savez_compressed(good_npz, rnfl_mask=gt_mask)
-        print(f"  Saved Clinician GT mask: {good_npz} (voxels: {np.sum(gt_mask == 1):,})")
+        print(f"  Saved human-reference mask: {good_npz} (voxels: {np.sum(gt_mask == 1):,})")
 
     if bad_xml:
         bad_mask = rasterize_full_volume(oct_volume, "bad")

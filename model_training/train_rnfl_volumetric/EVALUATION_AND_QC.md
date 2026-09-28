@@ -81,7 +81,7 @@ annotations are supplied.
 
 Every run additionally writes `audit_correction_analysis.csv`. The primary
 raw-versus-audit comparison is restricted to NFL columns displaced by at least
-1 pixel during clinician audit. It reports raw and U-Net MABE on those edited
+1 pixel during human audit. It reports raw and U-Net MABE on those edited
 columns, normalized correction gain, the fraction of edits recovered, and
 preservation within 1 pixel where the raw boundary was accepted. Cup-region
 outputs include presence recall and conditional left-edge, right-edge, and width

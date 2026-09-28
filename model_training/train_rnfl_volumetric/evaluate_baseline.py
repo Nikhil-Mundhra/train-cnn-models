@@ -2,7 +2,7 @@
 evaluate_baseline.py
 ====================
 Computes the quantitative baseline error of the uncorrected Solix machine segmentation ('bad')
-against the human clinician-reviewed reference ground truth ('good') across all subjects
+against the human-reviewed reference ('good') across all subjects
 in /Users/nikhilmundhra/Library/CloudStorage/Box-Box/deidentified.
 
 Per README Section 5:

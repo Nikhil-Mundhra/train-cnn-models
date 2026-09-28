@@ -165,6 +165,11 @@ class TestMarkdownUtilities(unittest.TestCase):
         self.assertIn("gallery_BEH0001.png", md)
         self.assertIn("deep_dive_BEH0001.png", md)
         self.assertIn("Benchmark MABE", md)
+        self.assertIn("## 4. External Evidence Context", md)
+        self.assertIn("Current model", md)
+        self.assertIn("Arian et al., 2026", md)
+        self.assertIn("subject-disjoint held-out cohort", md)
+        self.assertIn("## 9. Clinical Significance & Conclusion", md)
 
 
 class TestHtmlCompiler(unittest.TestCase):

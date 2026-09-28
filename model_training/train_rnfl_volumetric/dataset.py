@@ -82,7 +82,7 @@ def find_subject_dicom_and_curves(
     protocol: str = "Disc Cube"
 ) -> Tuple[str, Optional[str], Optional[str]]:
     """
-    Locates reference DICOM volume and corresponding clinician (good) and commercial (bad) curve XMLs.
+    Locates reference DICOM volume and corresponding human-corrected (good) and commercial (bad) curve XMLs.
     Returns (dcm_path, good_xml_path, bad_xml_path).
     Raises FileNotFoundError if DICOM volume is not found.
     """

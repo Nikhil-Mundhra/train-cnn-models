@@ -1,4 +1,4 @@
-"""Edit-focused analysis for raw commercial versus clinician-audited OCT curves."""
+"""Edit-focused analysis for raw commercial versus human-audited OCT curves."""
 
 from typing import Any, Dict, Optional, Tuple
 
@@ -18,7 +18,7 @@ def _cup_edges(mask: np.ndarray) -> Optional[Tuple[int, int]]:
 
 
 def compute_audit_correction_metrics(
-    clinician_nfl: np.ndarray,
+    human_nfl: np.ndarray,
     raw_nfl: Optional[np.ndarray],
     predicted_nfl: np.ndarray,
     predicted_cup_probability: np.ndarray,
@@ -29,16 +29,16 @@ def compute_audit_correction_metrics(
     preservation_tolerance_px: float = PRESERVATION_TOLERANCE_PX,
     fast_axis_res_um: float = FAST_AXIS_RES_UM,
 ) -> Dict[str, Any]:
-    """Measure recovery of clinician edits separately from unchanged-region fidelity.
+    """Measure recovery of human edits separately from unchanged-region fidelity.
 
     A column is materially edited when the raw and audited NFL surfaces differ by at
     least ``edit_threshold_px``. Cup metrics use the horizontal extent of the NFL-
     absence region and are conditional on both masks containing a detectable region.
     """
     peri = np.asarray(peripapillary_slices, dtype=bool)
-    if clinician_nfl.shape != predicted_nfl.shape or clinician_nfl.shape != predicted_cup_probability.shape:
-        raise ValueError("Clinician, prediction, and cup arrays must have identical (B-scan, A-scan) shapes")
-    if peri.shape != (clinician_nfl.shape[0],):
+    if human_nfl.shape != predicted_nfl.shape or human_nfl.shape != predicted_cup_probability.shape:
+        raise ValueError("Human reference, prediction, and cup arrays must have identical (B-scan, A-scan) shapes")
+    if peri.shape != (human_nfl.shape[0],):
         raise ValueError("peripapillary_slices must contain one boolean per B-scan")
 
     result: Dict[str, Any] = {
@@ -64,11 +64,11 @@ def compute_audit_correction_metrics(
     }
 
     if raw_nfl is not None:
-        if raw_nfl.shape != clinician_nfl.shape:
-            raise ValueError("Raw and clinician NFL arrays must have identical shapes")
-        valid = peri[:, None] & np.isfinite(clinician_nfl) & np.isfinite(raw_nfl) & np.isfinite(predicted_nfl)
-        raw_error_px = np.abs(raw_nfl - clinician_nfl)
-        unet_error_px = np.abs(predicted_nfl - clinician_nfl)
+        if raw_nfl.shape != human_nfl.shape:
+            raise ValueError("Raw and human-reference NFL arrays must have identical shapes")
+        valid = peri[:, None] & np.isfinite(human_nfl) & np.isfinite(raw_nfl) & np.isfinite(predicted_nfl)
+        raw_error_px = np.abs(raw_nfl - human_nfl)
+        unet_error_px = np.abs(predicted_nfl - human_nfl)
         edited = valid & (raw_error_px >= edit_threshold_px)
         unchanged = valid & (raw_error_px < edit_threshold_px)
 
@@ -103,7 +103,7 @@ def compute_audit_correction_metrics(
     raw_width_errors = []
 
     for b_idx in np.flatnonzero(peri):
-        gt_edges = _cup_edges(np.isnan(clinician_nfl[b_idx]))
+        gt_edges = _cup_edges(np.isnan(human_nfl[b_idx]))
         if gt_edges is None:
             continue
         gt_presence_count += 1

@@ -281,7 +281,7 @@ def render_baseline_comparison_chart(scans: List[Dict[str, Any]], out_path: str,
     gains = [s['audit_correction_gain'] for s in edited_scans]
     preservation = [s.get('audit_unchanged_preservation_rate') for s in edited_scans]
 
-    # --- Left: error only where the clinician materially edited the raw surface. ---
+    # --- Left: error only where the human reviewer materially edited the raw surface. ---
     for i in range(n):
         improved = unet_errors[i] < raw_errors[i]
         line_color = pal["unet_color"] if improved else pal["bad_color"]
@@ -289,7 +289,7 @@ def render_baseline_comparison_chart(scans: List[Dict[str, Any]], out_path: str,
         ax1.scatter(raw_errors[i], y_pos[i], color=pal["bad_color"], s=72, marker="o", zorder=3)
         ax1.scatter(unet_errors[i], y_pos[i], color=pal["unet_color"], s=82, marker="s", zorder=4)
 
-    ax1.set_title("Boundary error on clinician-edited columns", color=pal["text"], fontsize=11.5, fontweight="bold", pad=12)
+    ax1.set_title("Boundary error on human-edited columns", color=pal["text"], fontsize=11.5, fontweight="bold", pad=12)
     ax1.set_xlabel("MABE (µm; lower is better)", color=pal["subtext"], fontsize=10.5, fontweight="bold")
     ax1.set_yticks(y_pos)
     ax1.set_yticklabels(labels, color=pal["text"], fontsize=9.5, fontweight="bold")
@@ -302,11 +302,11 @@ def render_baseline_comparison_chart(scans: List[Dict[str, Any]], out_path: str,
         ax2.barh(y_pos[i], gains[i] * 100.0, color=color, alpha=0.85, height=0.55)
         ax2.text(gains[i] * 100.0, y_pos[i], f" {gains[i] * 100:+.0f}%", color=pal["text"], fontsize=8.5, va="center")
     ax2.axvline(0, color=pal["spine"], linewidth=1.4)
-    ax2.set_title("Clinician-correction gain", color=pal["text"], fontsize=11.5, fontweight="bold", pad=12)
+    ax2.set_title("Human-correction gain", color=pal["text"], fontsize=11.5, fontweight="bold", pad=12)
     ax2.set_xlabel("1 - (U-Net error / raw error), %", color=pal["subtext"], fontsize=10.0, fontweight="bold")
     ax2.grid(axis="x", color=pal["grid"], linestyle="--", alpha=0.7)
 
-    # --- Right: fidelity where the clinician accepted the raw boundary. ---
+    # --- Right: fidelity where the human reviewer accepted the raw boundary. ---
     for i, value in enumerate(preservation):
         if value is None:
             continue
@@ -334,7 +334,7 @@ def render_baseline_comparison_chart(scans: List[Dict[str, Any]], out_path: str,
                labelcolor=pal["legend_text"], loc="lower center", bbox_to_anchor=(0.5, 0.035), fontsize=9, ncol=2)
 
     threshold = edited_scans[0].get('audit_edit_threshold_px', 1.0)
-    plt.suptitle(f"Audit-Correction Analysis: {n} Scans with Material Clinician Edits", color=pal["text"], fontsize=15, fontweight="bold", y=0.99)
+    plt.suptitle(f"Audit-Correction Analysis: {n} Scans with Material Human Edits", color=pal["text"], fontsize=15, fontweight="bold", y=0.99)
     fig.text(0.5, 0.008, f"Edited columns differ by at least {threshold:g} px between raw and audit. Positive correction gain favours the U-Net; n is the number of edited columns.",
              color=pal["subtext"], fontsize=9, ha="center")
     plt.tight_layout(rect=[0, 0.075, 1, 0.95])

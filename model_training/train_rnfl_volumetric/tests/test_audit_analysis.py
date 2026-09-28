@@ -17,13 +17,13 @@ from audit_analysis import compute_audit_correction_metrics
 
 class TestAuditCorrectionMetrics(unittest.TestCase):
     def test_separates_edited_and_unchanged_columns(self):
-        clinician = np.array([[10.0, 10.0, 10.0, np.nan, np.nan]])
+        human_reference = np.array([[10.0, 10.0, 10.0, np.nan, np.nan]])
         raw = np.array([[10.0, 12.0, 14.0, np.nan, np.nan]])
         predicted = np.array([[10.5, 10.5, 13.0, np.nan, np.nan]])
         cup_probability = np.array([[0.0, 0.0, 0.0, 1.0, 1.0]])
 
         metrics = compute_audit_correction_metrics(
-            clinician,
+            human_reference,
             raw,
             predicted,
             cup_probability,
@@ -40,12 +40,12 @@ class TestAuditCorrectionMetrics(unittest.TestCase):
         self.assertAlmostEqual(metrics["audit_unchanged_preservation_rate"], 1.0)
 
     def test_cup_edge_localization_uses_fast_axis_resolution(self):
-        clinician = np.array([[10.0, np.nan, np.nan, 10.0, 10.0]])
+        human_reference = np.array([[10.0, np.nan, np.nan, 10.0, 10.0]])
         predicted = np.array([[10.0, np.nan, np.nan, 10.0, 10.0]])
         cup_probability = np.array([[0.0, 0.0, 1.0, 1.0, 0.0]])
 
         metrics = compute_audit_correction_metrics(
-            clinician,
+            human_reference,
             None,
             predicted,
             cup_probability,
@@ -61,13 +61,13 @@ class TestAuditCorrectionMetrics(unittest.TestCase):
         self.assertAlmostEqual(metrics["unet_cup_presence_recall"], 1.0)
 
     def test_material_edit_threshold_is_inclusive(self):
-        clinician = np.array([[10.0, 10.0]])
+        human_reference = np.array([[10.0, 10.0]])
         raw = np.array([[11.0, 10.9]])
         predicted = np.array([[10.0, 10.0]])
-        cup_probability = np.zeros_like(clinician)
+        cup_probability = np.zeros_like(human_reference)
 
         metrics = compute_audit_correction_metrics(
-            clinician,
+            human_reference,
             raw,
             predicted,
             cup_probability,
