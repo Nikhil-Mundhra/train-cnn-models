@@ -74,6 +74,10 @@ def generate_markdown_report(
         and s.get('audit_correction_gain') is not None
         and not s.get('is_mirror', False)
     ]
+    val_edited_scans = [s for s in audit_edited_scans if s.get('is_validation', False)]
+    bench_edited_scans = [s for s in audit_edited_scans if not s.get('is_validation', False)]
+    val_audit_improved = sum(1 for s in val_edited_scans if s['audit_correction_gain'] > 0)
+    val_gain_median = float(np.median([s['audit_correction_gain'] for s in val_edited_scans])) if val_edited_scans else 0.0
     audit_improved = sum(1 for s in audit_edited_scans if s['audit_correction_gain'] > 0)
     audit_gain_median = float(np.median([s['audit_correction_gain'] for s in audit_edited_scans])) if audit_edited_scans else 0.0
     audit_recovery_median = float(np.median([s['audit_edit_recovery_rate'] for s in audit_edited_scans])) if audit_edited_scans else 0.0
@@ -302,7 +306,7 @@ This report delivers an automated cohort-wide comparative evaluation of the **Mu
 1. **Laterality Stability After Coordinate Correction**: Benchmark OD median MABE was **${stats_bench_od_mabe['median']:.2f} \\; \\mu\\text{{m}}$** with median Dice **${stats_bench_od_dice['median']:.4f}$**; benchmark OS median MABE was **${stats_bench_os_mabe['median']:.2f} \\; \\mu\\text{{m}}$** with median Dice **${stats_bench_os_dice['median']:.4f}$**. The previous cohort-wide OS collapse was an inference-coordinate defect, not a supported model finding.
 2. **Held-Out Failure Is Subject-Specific**: Across the {len(val_scans)} held-out acquisitions ({val_subjs_str}), median MABE was **${stats_val_mabe['median']:.2f} \\; \\mu\\text{{m}}$**. The worst held-out scan was **{worst_val_label}** at **${worst_val_mabe:.2f} \\; \\mu\\text{{m}}$**; pooled validation statistics therefore require scan-level review.
 3. **Not Ready for Autonomous Clinical Use**: {qc_finding} These engineering thresholds are not clinically validated, but residual Dice, cup-IoU, and boundary-error failures require mandatory human review.
-4. **Audit-Correction Performance**: {len(audit_edited_scans)} scans contained material human edits of at least {audit_threshold_px:g} px. The U-Net reduced raw boundary error in {audit_improved} scans, with median correction gain **{audit_gain_median * 100:+.1f}%** and median edited-column recovery rate **{audit_recovery_median * 100:.1f}%**. This edit-focused analysis is primary; whole-mask commercial Dice is reference-dependent and descriptive only.
+4. **Audit-Correction Performance**: Across {len(audit_edited_scans)} materially edited scans ({len(bench_edited_scans)} benchmark training, {len(val_edited_scans)} held-out validation), the U-Net reduced raw commercial error in {audit_improved} scans overall (and in {val_audit_improved} of {len(val_edited_scans)} held-out validation scans, with validation median gain **{val_gain_median * 100:+.1f}%**). Median overall correction gain was **{audit_gain_median * 100:+.1f}%** and median edited-column recovery rate was **{audit_recovery_median * 100:.1f}%**. This edit-focused analysis is primary; whole-mask commercial Dice is reference-dependent and descriptive only.
 
 ---
 
@@ -342,13 +346,13 @@ The multi-panel plot stratifies benchmark and held-out scans by eye. Error metri
 
 The chart shows all {n_scans} eye-level scans ranked best to worst by MABE. MABE uses a logarithmic axis to preserve the 2-15 µm range while retaining severe outliers; Dice and Cup IoU are shown in separate aligned panels. `[MIRROR]` identifies an unedited machine copy rather than an independent commercial annotation.
 
-![Complete 46-Scan Forest Plot]({assets_rel_dir}/cohort_per_scan_forest_plot.png)
+![Complete {n_scans}-Scan Forest Plot]({assets_rel_dir}/cohort_per_scan_forest_plot.png)
 
 ---
 
 ### 3.3 Audit-Correction Analysis: U-Net vs Raw Commercial Boundary
 
-Whole-mask comparison is reference-dependent because the human-audited annotation was created by editing the raw commercial result. The primary comparator analysis therefore isolates columns with a raw-to-audit displacement of at least {audit_threshold_px:g} px. Across {len(audit_edited_scans)} materially edited scans, the U-Net reduced boundary error in {audit_improved}; median correction gain was **{audit_gain_median * 100:+.1f}%**, median edited-column recovery was **{audit_recovery_median * 100:.1f}%**, and median unchanged-region preservation was **{audit_preservation_median * 100:.1f}%**. Negative correction gain means the U-Net was farther from the audit than the raw boundary on edited columns.
+Whole-mask comparison is reference-dependent because the human-audited annotation was created by editing the raw commercial result. The primary comparator analysis therefore isolates columns with a raw-to-audit displacement of at least {audit_threshold_px:g} px. Across {len(audit_edited_scans)} materially edited scans ({len(bench_edited_scans)} benchmark training and {len(val_edited_scans)} held-out validation across {', '.join(sorted(set(s['subject'] for s in val_edited_scans)))}), the U-Net reduced boundary error in {audit_improved} scans overall, and in {val_audit_improved} of {len(val_edited_scans)} held-out validation scans. Across the unseen validation scans, median correction gain was **{val_gain_median * 100:+.1f}%**. Overall median correction gain was **{audit_gain_median * 100:+.1f}%**, median edited-column recovery was **{audit_recovery_median * 100:.1f}%**, and median unchanged-region preservation was **{audit_preservation_median * 100:.1f}%**. Negative correction gain means the U-Net was farther from the audit than the raw boundary on edited columns. In the chart below, held-out validation scans are explicitly flagged with `[VAL]`.
 
 ![Audit-Correction Analysis]({assets_rel_dir}/baseline_vs_unet_head_to_head.png)
 

@@ -54,9 +54,9 @@ def render_statistical_raincloud_chart(scans: List[Dict[str, Any]], out_path: st
     pal = get_theme_palette(theme)
     groups = [
         ("OD benchmark", [s for s in scans if s['eye'] == 'OD' and not s.get('is_validation', False)], pal["bench_od_color"], "o"),
-        ("OD held-out", [s for s in scans if s['eye'] == 'OD' and s.get('is_validation', False)], pal["bench_od_color"], "D"),
+        ("OD held-out", [s for s in scans if s['eye'] == 'OD' and s.get('is_validation', False)], pal["val_color"], "D"),
         ("OS benchmark", [s for s in scans if s['eye'] == 'OS' and not s.get('is_validation', False)], pal["bench_os_color"], "o"),
-        ("OS held-out", [s for s in scans if s['eye'] == 'OS' and s.get('is_validation', False)], pal["bench_os_color"], "D"),
+        ("OS held-out", [s for s in scans if s['eye'] == 'OS' and s.get('is_validation', False)], pal["val_color"], "D"),
     ]
 
     metrics = [
@@ -162,7 +162,6 @@ def render_complete_scan_forest_chart(scans: List[Dict[str, Any]], out_path: str
     for s in sorted_scans:
         tag = f"{s['subject']} ({s['eye']})"
         if s.get('is_validation', False):
-            tag += " [VAL]"
             label_colors.append(pal["val_color"])
         elif s.get('is_mirror', False):
             tag += " [MIRROR]"
@@ -209,8 +208,13 @@ def render_complete_scan_forest_chart(scans: List[Dict[str, Any]], out_path: str
 
     # --- Separate panels avoid implying a change between unlike metrics. ---
     for i in range(n_scans):
-        ax2.scatter(dices[i], y_pos[i], color=pal["bench_od_color"], s=60, marker="o", edgecolors="white" if theme == "dark" else pal["ax_face"], linewidths=0.8, zorder=4)
-        ax3.scatter(cups[i], y_pos[i], color=pal["cup_color"], s=65, marker="d", edgecolors="white" if theme == "dark" else pal["ax_face"], linewidths=0.8, zorder=4)
+        is_v = sorted_scans[i].get('is_validation', False)
+        eye = sorted_scans[i]['eye']
+        node_color = pal["val_color"] if is_v else (pal["unet_color"] if eye == "OD" else pal["bench_os_color"])
+        marker = "D" if is_v else ("o" if eye == "OD" else "s")
+        size = 85 if is_v else 60
+        ax2.scatter(dices[i], y_pos[i], color=node_color, s=size, marker=marker, edgecolors="white" if theme == "dark" else pal["ax_face"], linewidths=0.8, zorder=4)
+        ax3.scatter(cups[i], y_pos[i], color=node_color if is_v else pal["cup_color"], s=size, marker=marker if is_v else "d", edgecolors="white" if theme == "dark" else pal["ax_face"], linewidths=0.8, zorder=4)
 
     custom_legend = [
         Line2D([0], [0], color=pal["val_color"], lw=3, label='Held-Out Validation'),
@@ -266,7 +270,10 @@ def render_baseline_comparison_chart(scans: List[Dict[str, Any]], out_path: str,
     edited_scans = sorted(edited_scans, key=lambda s: s['audit_correction_gain'], reverse=True)
     n = len(edited_scans)
     y_pos = np.arange(n)
-    labels = [f"{s['subject']} ({s['eye']})  n={s['audit_edited_columns']:,}" for s in edited_scans]
+    labels = [
+        f"{'[VAL] ' if s.get('is_validation') else '      '}{s['subject']} ({s['eye']})  n={s['audit_edited_columns']:,}"
+        for s in edited_scans
+    ]
 
     fig, axes = plt.subplots(
         1, 3, figsize=(18, max(7.5, 0.58 * n + 2.8)), sharey=True,
@@ -283,11 +290,22 @@ def render_baseline_comparison_chart(scans: List[Dict[str, Any]], out_path: str,
 
     # --- Left: error only where the human reviewer materially edited the raw surface. ---
     for i in range(n):
+        is_v = edited_scans[i].get('is_validation', False)
         improved = unet_errors[i] < raw_errors[i]
-        line_color = pal["unet_color"] if improved else pal["bad_color"]
-        ax1.hlines(y_pos[i], raw_errors[i], unet_errors[i], color=line_color, alpha=0.7, linewidth=2.0)
+        if is_v:
+            line_color = pal["val_color"] if improved else pal["bad_color"]
+            unet_color = pal["val_color"]
+            unet_marker = "D"
+            unet_size = 92
+        else:
+            line_color = pal["unet_color"] if improved else pal["bad_color"]
+            unet_color = pal["unet_color"]
+            unet_marker = "s"
+            unet_size = 82
+
+        ax1.hlines(y_pos[i], raw_errors[i], unet_errors[i], color=line_color, alpha=0.75, linewidth=2.0)
         ax1.scatter(raw_errors[i], y_pos[i], color=pal["bad_color"], s=72, marker="o", zorder=3)
-        ax1.scatter(unet_errors[i], y_pos[i], color=pal["unet_color"], s=82, marker="s", zorder=4)
+        ax1.scatter(unet_errors[i], y_pos[i], color=unet_color, s=unet_size, marker=unet_marker, zorder=4)
 
     ax1.set_title("Boundary error on human-edited columns", color=pal["text"], fontsize=11.5, fontweight="bold", pad=12)
     ax1.set_xlabel("MABE (µm; lower is better)", color=pal["subtext"], fontsize=10.5, fontweight="bold")
@@ -298,9 +316,14 @@ def render_baseline_comparison_chart(scans: List[Dict[str, Any]], out_path: str,
 
     # --- Middle: normalized correction gain. ---
     for i in range(n):
-        color = pal["unet_color"] if gains[i] > 0 else pal["bad_color"]
-        ax2.barh(y_pos[i], gains[i] * 100.0, color=color, alpha=0.85, height=0.55)
-        ax2.text(gains[i] * 100.0, y_pos[i], f" {gains[i] * 100:+.0f}%", color=pal["text"], fontsize=8.5, va="center")
+        is_v = edited_scans[i].get('is_validation', False)
+        if gains[i] > 0:
+            bar_color = pal["val_color"] if is_v else pal["unet_color"]
+        else:
+            bar_color = pal["bad_color"]
+        ax2.barh(y_pos[i], gains[i] * 100.0, color=bar_color, alpha=0.85, height=0.55)
+        text_color = pal["val_color"] if is_v else pal["text"]
+        ax2.text(gains[i] * 100.0, y_pos[i], f" {gains[i] * 100:+.0f}%", color=text_color, fontsize=8.5, va="center", fontweight="bold" if is_v else "normal")
     ax2.axvline(0, color=pal["spine"], linewidth=1.4)
     ax2.set_title("Human-correction gain", color=pal["text"], fontsize=11.5, fontweight="bold", pad=12)
     ax2.set_xlabel("1 - (U-Net error / raw error), %", color=pal["subtext"], fontsize=10.0, fontweight="bold")
@@ -310,8 +333,11 @@ def render_baseline_comparison_chart(scans: List[Dict[str, Any]], out_path: str,
     for i, value in enumerate(preservation):
         if value is None:
             continue
-        ax3.barh(y_pos[i], value * 100.0, color=pal["cup_color"], alpha=0.85, height=0.55)
-        ax3.text(value * 100.0, y_pos[i], f" {value * 100:.0f}%", color=pal["text"], fontsize=8.5, va="center")
+        is_v = edited_scans[i].get('is_validation', False)
+        edge_kwargs = {"edgecolor": pal["val_color"], "linewidth": 1.5} if is_v else {}
+        ax3.barh(y_pos[i], value * 100.0, color=pal["cup_color"], alpha=0.85, height=0.55, **edge_kwargs)
+        text_color = pal["val_color"] if is_v else pal["text"]
+        ax3.text(value * 100.0, y_pos[i], f" {value * 100:.0f}%", color=text_color, fontsize=8.5, va="center", fontweight="bold" if is_v else "normal")
     ax3.set_xlim(0, 105)
     ax3.set_title("Unchanged-region preservation", color=pal["text"], fontsize=11.5, fontweight="bold", pad=12)
     ax3.set_xlabel("Columns within 1 px of audit, %", color=pal["subtext"], fontsize=10.0, fontweight="bold")
@@ -326,12 +352,21 @@ def render_baseline_comparison_chart(scans: List[Dict[str, Any]], out_path: str,
             spine.set_color(pal["spine"])
     ax1.invert_yaxis()
 
+    # Color validation ytick labels in bold orange AFTER tick_params & invert_yaxis
+    for s, lbl in zip(edited_scans, ax1.get_yticklabels()):
+        if s.get("is_validation"):
+            lbl.set_color(pal["val_color"])
+            lbl.set_fontweight("bold")
+        else:
+            lbl.set_color(pal["text"])
+
     legend = [
-        Line2D([0], [0], marker='o', color='none', markerfacecolor=pal["bad_color"], markersize=9, label='Raw commercial'),
-        Line2D([0], [0], marker='s', color='none', markerfacecolor=pal["unet_color"], markersize=9, label='Volumetric U-Net'),
+        Line2D([0], [0], marker='o', color='none', markerfacecolor=pal["bad_color"], markersize=8, label='Raw commercial'),
+        Line2D([0], [0], marker='s', color='none', markerfacecolor=pal["unet_color"], markersize=8, label='Volumetric U-Net (Benchmark)'),
+        Line2D([0], [0], marker='D', color='none', markerfacecolor=pal["val_color"], markersize=8, label='Volumetric U-Net (Held-Out [VAL])'),
     ]
     fig.legend(handles=legend, facecolor=pal["legend_fc"], edgecolor=pal["legend_ec"],
-               labelcolor=pal["legend_text"], loc="lower center", bbox_to_anchor=(0.5, 0.035), fontsize=9, ncol=2)
+               labelcolor=pal["legend_text"], loc="lower center", bbox_to_anchor=(0.5, 0.035), fontsize=9, ncol=3)
 
     threshold = edited_scans[0].get('audit_edit_threshold_px', 1.0)
     plt.suptitle(f"Audit-Correction Analysis: {n} Scans with Material Human Edits", color=pal["text"], fontsize=15, fontweight="bold", y=0.99)

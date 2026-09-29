@@ -146,6 +146,7 @@ class VolumePrediction:
 @dataclass(frozen=True)
 class OpticDiscCutConfig:
     """Anatomical dimensions and scale factors for optic disc cup masking."""
+    mode: str = "cup"             # "cup" (reaches optic cup, bounded by predicted cup void), "disc" (legacy 1.75mm disc cut), "none"
     dx_mm: float = 0.01875        # Solix Disc Cube horizontal resolution (mm/px)
     dz_mm: float = 0.0188088      # Solix Disc Cube slice step (mm/slice)
     disc_diam_x_mm: float = 1.75  # Mean anatomical horizontal optic disc diameter (mm)
@@ -167,6 +168,7 @@ class InferenceConfig:
     mask_threshold: float = 0.40
     cup_threshold: float = 0.50
     min_layer_thickness: float = 2.0  # Minimum NFL - ILM thickness in px for valid tissue
+    surface_axial_tolerance_px: float = 2.0  # Maximum axial margin beyond predicted surfaces
 
 
 
@@ -316,6 +318,8 @@ class VolumetricRNFLPredictor:
         device: torch.device,
         batch_size: int = 8,
         os_orientation_mode: str = "corrected",
+        config: InferenceConfig = InferenceConfig(),
+        disc_cut_config: OpticDiscCutConfig = OpticDiscCutConfig(),
     ) -> "VolumetricRNFLPredictor":
         ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
         ckpt_args = ckpt.get('args', {})
@@ -353,6 +357,8 @@ class VolumetricRNFLPredictor:
             model=model,
             device=device,
             batch_size=batch_size,
+            config=config,
+            disc_cut_config=disc_cut_config,
             os_orientation_mode=os_orientation_mode,
         )
 
@@ -499,13 +505,53 @@ class VolumetricRNFLPredictor:
         return out_mask
 
     @staticmethod
+    def clamp_mask_to_surfaces(
+        mask: np.ndarray,
+        fused_ilm: np.ndarray,
+        fused_nfl: np.ndarray,
+        fused_cup: np.ndarray,
+        config: InferenceConfig = InferenceConfig(),
+    ) -> np.ndarray:
+        """
+        Suppresses false-positive segmentation leakage into deep hyperreflective
+        retinal layers (RPE / Bruch's Membrane / choroid) or vitreous by constraining
+        dense voxel activations to the continuous 1D surface boundaries.
+        """
+        out_mask = mask.copy()
+        n_bscans, rows, cols = out_mask.shape
+        tol = config.surface_axial_tolerance_px
+        y_grid = np.arange(rows, dtype=np.float32)[:, None]
+
+        for b in range(n_bscans):
+            # Suppress any column identified as cup void cavity or invalid
+            cup_void = (fused_cup[b] >= config.cup_threshold) | np.isnan(fused_ilm[b]) | np.isnan(fused_nfl[b])
+            out_mask[b, :, cup_void] = 0
+
+            # Suppress pixels below NFL (RPE leakage) or above ILM (vitreous floaters)
+            top_bound = fused_ilm[b] - tol
+            bot_bound = fused_nfl[b] + tol
+
+            out_of_bounds = (y_grid < top_bound) | (y_grid > bot_bound)
+            out_mask[b][out_of_bounds] = 0
+
+        return out_mask
+
+    @staticmethod
     def apply_elliptical_disc_cut(
         mask: np.ndarray,
         zc: int,
         xc: int,
         config: OpticDiscCutConfig = OpticDiscCutConfig()
     ) -> np.ndarray:
-        """Applies anatomical elliptical optic disc cup void cut to the volumetric mask."""
+        """
+        Applies anatomical elliptical cut based on config.mode:
+        - 'cup': Preserves the neuroretinal rim; masks reach the optic cup (bounded by cup void and surface clamp).
+        - 'disc': Truncates at the outer 1.75mm optic disc margin (legacy baseline behavior).
+        - 'none': Bypasses the cut entirely.
+        """
+        if config.mode in ("cup", "none"):
+            return mask
+
         out_mask = mask.copy()
         n_bscans, _, cols = out_mask.shape
         rad_x_px = config.rad_x_px
@@ -547,6 +593,9 @@ class VolumetricRNFLPredictor:
         # Dense Segmentation & Hybrid Surface-Guided Recovery
         full_mask = (fused_probs > self.config.mask_threshold).astype(np.uint8)
         full_mask = self.recover_thin_dropouts(
+            full_mask, fused_ilm, fused_nfl, fused_cup, config=self.config
+        )
+        full_mask = self.clamp_mask_to_surfaces(
             full_mask, fused_ilm, fused_nfl, fused_cup, config=self.config
         )
 
@@ -892,6 +941,7 @@ class CohortEvaluatorPipeline:
         split_manifest: Optional[str] = None,
         subject_filter: Optional[List[str]] = None,
         eye_filter: Optional[List[str]] = None,
+        disc_cut_mode: str = "cup",
     ):
         self.dataset_root = dataset_root
         self.output_dir = output_dir
@@ -902,6 +952,7 @@ class CohortEvaluatorPipeline:
         self.split_map = load_split_manifest(split_manifest) if split_manifest else {}
         self.subject_filter = set(subject_filter or [])
         self.eye_filter = {eye.upper() for eye in (eye_filter or [])}
+        self.disc_cut_mode = disc_cut_mode
 
         dev_str = device if ("mps" in device and torch.backends.mps.is_available()) or "cuda" in device else "cpu"
         self.device = torch.device(dev_str)
@@ -912,13 +963,14 @@ class CohortEvaluatorPipeline:
         print(
             f"[Cohort Pipeline] Initializing VolumetricRNFLPredictor on {self.device} "
             f"(batch_size={self.batch_size}, biplanar_fusion={self.biplanar_fusion}, "
-            f"os_orientation_mode={self.os_orientation_mode})..."
+            f"os_orientation_mode={self.os_orientation_mode}, disc_cut_mode={self.disc_cut_mode})..."
         )
         self.predictor = VolumetricRNFLPredictor.from_checkpoint(
             checkpoint_path,
             self.device,
             batch_size=self.batch_size,
             os_orientation_mode=self.os_orientation_mode,
+            disc_cut_config=OpticDiscCutConfig(mode=self.disc_cut_mode),
         )
         self.metrics_calc = ClinicalMetricsCalculator(axial_res_um=AXIAL_RES_UM)
         self.visualizer = CohortVisualizer(output_dir=self.assets_dir)
@@ -1191,6 +1243,12 @@ def main():
         help="OS coordinate policy. legacy_vertical_mirror is retained only for controlled regression experiments.",
     )
     parser.add_argument("--device", type=str, default="mps")
+    parser.add_argument(
+        "--disc_cut_mode",
+        choices=["cup", "disc", "none"],
+        default="cup",
+        help="Optic nerve head boundary strategy: 'cup' allows masks to reach the optic cup down the neuroretinal rim; 'disc' truncates at fixed 1.75mm optic disc; 'none' bypasses.",
+    )
     parser.add_argument("--split_manifest", type=str, default=None, help="Optional JSON/CSV subject-to-split manifest. Subjects absent from the manifest are excluded.")
     parser.add_argument("--subjects", type=str, default=None, help="Optional comma-separated subject filter for targeted or external evaluation.")
     parser.add_argument("--eyes", type=str, default=None, help="Optional comma-separated eye filter (OD,OS).")
@@ -1213,6 +1271,7 @@ def main():
         split_manifest=args.split_manifest,
         subject_filter=subject_filter,
         eye_filter=eye_filter,
+        disc_cut_mode=args.disc_cut_mode,
     )
     pipeline.run()
 

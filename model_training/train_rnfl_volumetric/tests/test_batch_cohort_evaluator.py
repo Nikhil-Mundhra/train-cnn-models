@@ -327,11 +327,46 @@ class TestPredictorPostProcessing(unittest.TestCase):
         self.assertTrue(np.all(recovered[1, 10:25, 15] == 1))
         self.assertEqual(recovered[1, 0:10, 15].sum(), 0)
 
+    def test_clamp_mask_to_surfaces(self):
+        # 2 B-scans, 60 rows, 30 cols
+        mask = np.zeros((2, 60, 30), dtype=np.uint8)
+        # Populate true RNFL band between y=10 and y=25
+        mask[:, 10:25, :] = 1
+        # Introduce artificial RPE false-positive leakage between y=40 and y=55
+        mask[:, 40:55, :] = 1
+        # Introduce artificial vitreous false-positive floater between y=0 and y=5
+        mask[:, 0:5, :] = 1
+
+        ilm = np.full((2, 30), 10.0, dtype=np.float32)
+        nfl = np.full((2, 30), 25.0, dtype=np.float32)
+        cup = np.zeros((2, 30), dtype=np.float32)
+        # Column 20 is in cup cavity
+        cup[:, 20] = 0.9
+
+        clamped = VolumetricRNFLPredictor.clamp_mask_to_surfaces(
+            mask=mask,
+            fused_ilm=ilm,
+            fused_nfl=nfl,
+            fused_cup=cup,
+            config=InferenceConfig(surface_axial_tolerance_px=2.0)
+        )
+
+        # 1. RPE leakage (y >= 28) should be completely suppressed
+        self.assertEqual(clamped[:, 28:, :].sum(), 0)
+        # 2. Vitreous floater (y <= 7) should be completely suppressed
+        self.assertEqual(clamped[:, :8, :].sum(), 0)
+        # 3. True RNFL band (y in [10..25]) in non-cup columns should be intact
+        self.assertTrue(np.all(clamped[:, 10:25, :20] == 1))
+        self.assertTrue(np.all(clamped[:, 10:25, 21:] == 1))
+        # 4. Cup cavity column 20 should be completely cleared
+        self.assertEqual(clamped[:, :, 20].sum(), 0)
+
     def test_elliptical_disc_cut_direct_method(self):
         mask = np.ones((100, 50, 100), dtype=np.uint8)
         zc, xc = 50, 50
-        # Custom config for testing exact radii
+        # Custom config for testing exact radii with mode="disc"
         cfg = OpticDiscCutConfig(
+            mode="disc",
             dx_mm=0.01,
             dz_mm=0.01,
             disc_diam_x_mm=0.30,  # rad_x_px = 15.0
@@ -353,6 +388,19 @@ class TestPredictorPostProcessing(unittest.TestCase):
         self.assertEqual(cut_mask[50, :, 20].sum(), 50)
         # Far axial slice (z=90 > zc + rad_z): should remain untouched (all 1)
         self.assertEqual(cut_mask[90].sum(), 50 * 100)
+
+    def test_elliptical_disc_cut_cup_mode(self):
+        mask = np.ones((100, 50, 100), dtype=np.uint8)
+        zc, xc = 50, 50
+        cfg = OpticDiscCutConfig(mode="cup")
+        cut_mask = VolumetricRNFLPredictor.apply_elliptical_disc_cut(
+            mask=mask,
+            zc=zc,
+            xc=xc,
+            config=cfg
+        )
+        # In cup mode, mask is preserved intact (boundary reaching to cup)
+        np.testing.assert_array_equal(cut_mask, mask)
 
     def test_fuse_predictions(self):
         # Shape: (2, 10, 8)
