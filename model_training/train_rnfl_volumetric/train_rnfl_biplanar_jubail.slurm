@@ -13,8 +13,8 @@
 #SBATCH --gres=gpu:a100:1              # Request 1 NVIDIA A100 GPU (40 GB VRAM)
 #SBATCH -n 1                           # 1 task
 #SBATCH -c 8                           # 8 CPU cores for data loading
-#SBATCH --mem=32G                      # 32 GB system memory
-#SBATCH -t 06:00:00                    # Wall clock time limit (6 hours)
+#SBATCH --mem=48G                      # 48 GB system memory
+#SBATCH -t 12:00:00                    # Wall clock time limit (12 hours)
 #SBATCH -J rnfl_biplanar               # Job name
 #SBATCH -o slurm_rnfl_biplanar_%j.out  # Standard output log (%j expands to jobID)
 #SBATCH -e slurm_rnfl_biplanar_%j.err  # Standard error log
@@ -90,7 +90,7 @@ echo "##################################################################"
     --lr 5e-4 \
     --weight_decay 1e-4 \
     --context_slices 5 \
-    --num_workers 6 \
+    --num_workers 8 \
     --precision "bf16" \
     --enable_orthogonal \
     --augment \
