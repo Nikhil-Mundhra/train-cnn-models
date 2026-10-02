@@ -1,0 +1,446 @@
+{
+  "orphan_count": 63,
+  "orphans": [
+    {
+      "subject": "BEH0014",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0016",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0020",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0034",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0058",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0110",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0151",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0164",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0170",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0177",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0183",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0209",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0223",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0229",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0282",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0283",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0285",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0286",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0287",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0288",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0291",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0295",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0307",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0309",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0311",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0313",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0320",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0330",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0331",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0337",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0346",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0347",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0351",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0356",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0357",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0358",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0360",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0365",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0369",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0372",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0373",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0375",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0379",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0381",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0388",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0392",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0408",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0418",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0428",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0432",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0436",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0444",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0449",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0451",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0459",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0463",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0467",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0473",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0477",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0478",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0486",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0490",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0498",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    }
+  ]
+}
