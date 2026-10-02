@@ -1,5 +1,5 @@
 {
-  "orphan_count": 63,
+  "orphan_count": 66,
   "orphans": [
     {
       "subject": "BEH0014",
@@ -31,6 +31,20 @@
     },
     {
       "subject": "BEH0058",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0086",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0096",
       "in_dicom": true,
       "in_good": true,
       "in_bad": false,
@@ -94,6 +108,13 @@
     },
     {
       "subject": "BEH0229",
+      "in_dicom": true,
+      "in_good": true,
+      "in_bad": false,
+      "reason": "No Disc Cube DICOM volumes found"
+    },
+    {
+      "subject": "BEH0241",
       "in_dicom": true,
       "in_good": true,
       "in_bad": false,

@@ -1,0 +1,48 @@
+{
+  "schema_version": 2,
+  "name": "rnfl_stratified_held_out_v2",
+  "frozen_on": "2026-10-02",
+  "dataset": "deidentified-new",
+  "protocol": "Optovue Solix Disc Cube",
+  "array_order": ["slow_z", "axial_y", "fast_x"],
+  "spacing_um": [18.81, 3.12367, 18.75],
+  "selection_rule": "Stratified 20-subject (40-scan) validation benchmark (Option B2) for head-to-head comparison of BiPlanar and Anisotropic 3D U-Net models. Strictly disjoint from Phase 1 and Phase 2 training sets.",
+  "strata_breakdown": {
+    "total_subjects": 20,
+    "total_scans": 40,
+    "human_audited_count": 6,
+    "machine_verified_count": 14,
+    "thickness_distribution": {
+      "thick_gt_120um": ["BEH0259"],
+      "thin_lt_80um": ["BEH0084", "BEH0264", "BEH0343", "BEH0303"],
+      "interocular_asymmetry_gt_3sd": ["BEH0303", "BEH0352"],
+      "morphology_challenges": {
+        "small_disc": ["BEH0314"],
+        "myopic_crescent": ["BEH0335"],
+        "large_cup": ["BEH0310", "BEH0303"]
+      }
+    }
+  },
+  "subjects": [
+    {"subject": "BEH0174", "split": "held_out", "annotation_tier": "human_audited_corrected", "clinical_stratum": "canonical_audited"},
+    {"subject": "BEH0310", "split": "held_out", "annotation_tier": "human_audited_corrected", "clinical_stratum": "canonical_audited_large_cup"},
+    {"subject": "BEH0314", "split": "held_out", "annotation_tier": "human_audited_corrected", "clinical_stratum": "canonical_audited_small_disc_mutual_core"},
+    {"subject": "BEH0335", "split": "held_out", "annotation_tier": "human_audited_corrected_with_unedited_mirror_eye", "clinical_stratum": "canonical_audited_myopic_crescent_mutual_core"},
+    {"subject": "BEH0354", "split": "held_out", "annotation_tier": "human_audited_corrected", "clinical_stratum": "canonical_audited"},
+    {"subject": "BEH0352", "split": "held_out", "annotation_tier": "human_audited_corrected", "clinical_stratum": "audited_interocular_asymmetry"},
+    {"subject": "BEH0090", "split": "held_out", "annotation_tier": "accepted_as_segmented", "clinical_stratum": "canonical_verified_normal"},
+    {"subject": "BEH0284", "split": "held_out", "annotation_tier": "accepted_as_segmented", "clinical_stratum": "canonical_verified_normal"},
+    {"subject": "BEH0259", "split": "held_out", "annotation_tier": "accepted_as_segmented", "clinical_stratum": "verified_thick_rnfl_gt_120um"},
+    {"subject": "BEH0084", "split": "held_out", "annotation_tier": "accepted_as_segmented", "clinical_stratum": "verified_thin_rnfl_lt_80um"},
+    {"subject": "BEH0264", "split": "held_out", "annotation_tier": "accepted_as_segmented", "clinical_stratum": "verified_thin_rnfl_lt_80um"},
+    {"subject": "BEH0343", "split": "held_out", "annotation_tier": "accepted_as_segmented", "clinical_stratum": "verified_thin_rnfl_lt_80um"},
+    {"subject": "BEH0303", "split": "held_out", "annotation_tier": "accepted_as_segmented", "clinical_stratum": "verified_large_cup_thin_rnfl_asymmetry"},
+    {"subject": "BEH0030", "split": "held_out", "annotation_tier": "accepted_as_segmented", "clinical_stratum": "verified_bilateral_normal"},
+    {"subject": "BEH0043", "split": "held_out", "annotation_tier": "accepted_as_segmented", "clinical_stratum": "verified_bilateral_normal"},
+    {"subject": "BEH0290", "split": "held_out", "annotation_tier": "accepted_as_segmented", "clinical_stratum": "verified_bilateral_normal"},
+    {"subject": "BEH0249", "split": "held_out", "annotation_tier": "accepted_as_segmented", "clinical_stratum": "verified_bilateral_normal"},
+    {"subject": "BEH0279", "split": "held_out", "annotation_tier": "accepted_as_segmented", "clinical_stratum": "verified_bilateral_normal"},
+    {"subject": "BEH0289", "split": "held_out", "annotation_tier": "accepted_as_segmented", "clinical_stratum": "verified_bilateral_normal"},
+    {"subject": "BEH0297", "split": "held_out", "annotation_tier": "accepted_as_segmented", "clinical_stratum": "verified_bilateral_normal"}
+  ]
+}
