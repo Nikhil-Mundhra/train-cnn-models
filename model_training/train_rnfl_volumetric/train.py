@@ -27,9 +27,11 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+import json
 from dataset import SolixRNFLDataset, AXIAL_UM
 from model import VolumetricRNFLNet
 from losses import VolumetricRNFLLoss
+from evaluation_manifest import evaluation_subjects
 
 
 def compute_batch_metrics(preds, targets):
