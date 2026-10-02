@@ -183,7 +183,13 @@ def train(args):
         all_subjects = raw_subjects
 
     val_subjects = [s.strip() for s in args.val_subjects.split(',') if s.strip()]
-    train_subjects = [s for s in all_subjects if s not in val_subjects]
+    if args.train_subjects:
+        train_subjects = [s.strip() for s in args.train_subjects.split(',') if s.strip()]
+    else:
+        train_subjects = [s for s in all_subjects if s not in val_subjects]
+
+    leakage = set(train_subjects) & set(val_subjects)
+    assert not leakage, f"FATAL DATA LEAKAGE: Subject(s) {leakage} appear in both train and validation sets!"
 
     print(f"[Training] Protocol: {args.protocol} | Augmentation: {args.augment} | Laterality Emb: {args.use_laterality_embedding}")
     print(f"[Training] Total Cohort Pool: {len(all_subjects)} subjects with valid {args.protocol} scans")
@@ -397,6 +403,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_root", type=str, default="/Users/nikhilmundhra/Library/CloudStorage/Box-Box/deidentified")
     parser.add_argument("--val_subjects", type=str, default="BEH0335,BEH0314")
+    parser.add_argument("--train_subjects", type=str, default="", help="Optional explicit comma-separated training subjects (for fine-tuning on audited subsets)")
     parser.add_argument("--protocol", type=str, default="Disc Cube", help="OCT scan protocol to train on (e.g. 'Disc Cube')")
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch_size", type=int, default=4)

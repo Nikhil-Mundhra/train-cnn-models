@@ -1,0 +1,3 @@
+# Version 1.2.8 fixes the volume-similarity sign and all-zero-mask handling.
+seg-metrics==1.2.8
+

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "name": "rnfl_successor_held_out_v1",
+  "frozen_on": "2026-10-02",
+  "dataset": "deidentified-new",
+  "protocol": "Optovue Solix Disc Cube",
+  "array_order": ["slow_z", "axial_y", "fast_x"],
+  "spacing_um": [18.81, 3.12367, 18.75],
+  "selection_rule": "Validation subjects held out by the current 61-subject BiPlanar checkpoint and the planned audited fine-tuning run. These subjects must remain excluded from all successor training and model selection.",
+  "reference_contract": "tsv/good is the evaluation reference; subjects with paired tsv/bad and tsv/good are human-audited/corrected, while good-only subjects are accepted-as-segmented.",
+  "subjects": [
+    {"subject": "BEH0086", "split": "held_out", "annotation_tier": "accepted_as_segmented"},
+    {"subject": "BEH0090", "split": "held_out", "annotation_tier": "accepted_as_segmented"},
+    {"subject": "BEH0096", "split": "held_out", "annotation_tier": "accepted_as_segmented"},
+    {"subject": "BEH0174", "split": "held_out", "annotation_tier": "human_audited_corrected"},
+    {"subject": "BEH0241", "split": "held_out", "annotation_tier": "accepted_as_segmented"},
+    {"subject": "BEH0284", "split": "held_out", "annotation_tier": "accepted_as_segmented"},
+    {"subject": "BEH0310", "split": "held_out", "annotation_tier": "human_audited_corrected"},
+    {"subject": "BEH0314", "split": "held_out", "annotation_tier": "human_audited_corrected"},
+    {"subject": "BEH0335", "split": "held_out", "annotation_tier": "human_audited_corrected_with_unedited_mirror_eye"},
+    {"subject": "BEH0354", "split": "held_out", "annotation_tier": "human_audited_corrected"}
+  ]
+}

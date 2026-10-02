@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "name": "rnfl_mutual_held_out_v1",
+  "frozen_on": "2026-10-02",
+  "dataset": "deidentified-new",
+  "protocol": "Optovue Solix Disc Cube",
+  "array_order": ["slow_z", "axial_y", "fast_x"],
+  "spacing_um": [18.81, 3.12367, 18.75],
+  "selection_rule": "Intersection of subjects held out by every legacy checkpoint currently retained in checkpoints/. Use only for comparisons that include those older two-subject-validation models, not as the primary successor benchmark.",
+  "reference_contract": "tsv/good is the evaluation reference; tsv/bad is comparator-only and may be an unedited mirror.",
+  "subjects": [
+    {
+      "subject": "BEH0314",
+      "split": "held_out",
+      "eye_annotation_tiers": {
+        "OD": "human_audited_corrected",
+        "OS": "human_audited_corrected"
+      }
+    },
+    {
+      "subject": "BEH0335",
+      "split": "held_out",
+      "eye_annotation_tiers": {
+        "OD": "human_audited_corrected",
+        "OS": "accepted_as_segmented_unedited_mirror"
+      }
+    }
+  ]
+}

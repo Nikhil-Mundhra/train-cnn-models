@@ -38,19 +38,29 @@ from orientation import (
     vertical_source_and_destination,
 )
 from quality_control import assess_prediction
-from evaluation_manifest import is_evaluation_split, load_split_manifest
+from evaluation_manifest import evaluation_subjects, is_evaluation_split, load_split_manifest
 from audit_analysis import (
     AUDIT_EDIT_THRESHOLD_PX,
     PRESERVATION_TOLERANCE_PX,
     compute_audit_correction_metrics,
 )
+from spatial import AXIAL_UM, FAST_UM, SLOW_UM
 
-AXIAL_RES_UM: float = 3.09
+AXIAL_RES_UM: float = AXIAL_UM
 
 
-def resolve_validation_subjects(checkpoint_path: str, requested: Optional[str] = None) -> List[str]:
-    """Resolve held-out subjects from an explicit override or checkpoint metadata."""
+def resolve_validation_subjects(
+    checkpoint_path: str,
+    requested: Optional[str] = None,
+    split_manifest: Optional[str] = None,
+) -> List[str]:
+    """Resolve held-out subjects from override, manifest, or checkpoint metadata."""
     raw_subjects: Any = requested
+    if not raw_subjects and split_manifest:
+        subjects = evaluation_subjects(split_manifest)
+        if not subjects:
+            raise ValueError(f"Split manifest has no evaluation subjects: {split_manifest}")
+        return subjects
     if not raw_subjects:
         checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         if isinstance(checkpoint, dict):
@@ -147,8 +157,8 @@ class VolumePrediction:
 class OpticDiscCutConfig:
     """Anatomical dimensions and scale factors for optic disc cup masking."""
     mode: str = "cup"             # "cup" (reaches optic cup, bounded by predicted cup void), "disc" (legacy 1.75mm disc cut), "none"
-    dx_mm: float = 0.01875        # Solix Disc Cube horizontal resolution (mm/px)
-    dz_mm: float = 0.0188088      # Solix Disc Cube slice step (mm/slice)
+    dx_mm: float = FAST_UM / 1000.0  # Solix fast-axis resolution (mm/px)
+    dz_mm: float = SLOW_UM / 1000.0  # Solix slow-axis resolution (mm/slice)
     disc_diam_x_mm: float = 1.75  # Mean anatomical horizontal optic disc diameter (mm)
     disc_diam_z_mm: float = 1.85  # Mean anatomical vertical optic disc diameter (mm)
 
@@ -1225,7 +1235,7 @@ class CohortEvaluatorPipeline:
 def main():
     parser = argparse.ArgumentParser(description="Object-Oriented Volumetric RNFL Cohort Evaluator")
     parser.add_argument("--checkpoint", type=str, required=True, help="Path to trained model checkpoint (.pt)")
-    parser.add_argument("--dataset_root", type=str, default="/Users/nikhilmundhra/Library/CloudStorage/Box-Box/deidentified")
+    parser.add_argument("--dataset_root", type=str, default="/Users/nikhilmundhra/Library/CloudStorage/Box-Box/deidentified-new")
     parser.add_argument("--output_dir", type=str, default="/Users/nikhilmundhra/Documents/Github/Capstone/OCT-Analyser-Capstone/docs")
     parser.add_argument(
         "--val_subjects",
@@ -1254,7 +1264,11 @@ def main():
     parser.add_argument("--eyes", type=str, default=None, help="Optional comma-separated eye filter (OD,OS).")
     args = parser.parse_args()
 
-    val_subjects = resolve_validation_subjects(args.checkpoint, args.val_subjects)
+    val_subjects = resolve_validation_subjects(
+        args.checkpoint,
+        args.val_subjects,
+        split_manifest=args.split_manifest,
+    )
     print(f"[Cohort Pipeline] Validation subjects: {', '.join(val_subjects)}")
     subject_filter = [s.strip() for s in args.subjects.split(",") if s.strip()] if args.subjects else None
     eye_filter = [eye.strip().upper() for eye in args.eyes.split(",") if eye.strip()] if args.eyes else None

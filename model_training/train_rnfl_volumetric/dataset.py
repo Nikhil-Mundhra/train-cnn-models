@@ -19,9 +19,7 @@ import torch
 from typing import Tuple, Optional, Dict, List, Set
 from torch.utils.data import Dataset
 
-AXIAL_UM = 3.12367
-FAST_UM = 18.7500
-SLOW_UM = 18.8100
+from spatial import AXIAL_UM, FAST_UM, SLOW_UM
 SENTINEL = 3000
 DROP = {'N/A', 'RPE Ref'}
 

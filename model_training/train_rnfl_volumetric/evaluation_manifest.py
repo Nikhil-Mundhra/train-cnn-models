@@ -3,7 +3,7 @@
 import csv
 import json
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 
 
 EVALUATION_SPLITS = {"validation", "held_out", "held-out", "test", "external", "external_test"}
@@ -44,3 +44,9 @@ def load_split_manifest(path: str) -> Dict[str, str]:
 
 def is_evaluation_split(split: str) -> bool:
     return split.strip().lower() in EVALUATION_SPLITS
+
+
+def evaluation_subjects(path: str) -> List[str]:
+    """Return the sorted subjects assigned to an evaluation-only split."""
+    split_map = load_split_manifest(path)
+    return sorted(subject for subject, split in split_map.items() if is_evaluation_split(split))

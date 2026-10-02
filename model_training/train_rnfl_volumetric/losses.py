@@ -13,7 +13,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from monai.losses import DiceLoss, TverskyLoss
 
-AXIAL_UM = 3.12367
+from spatial import AXIAL_UM
 
 
 class VolumetricRNFLLoss(nn.Module):

@@ -102,6 +102,22 @@ class TestDataStructures(unittest.TestCase):
                 ["BEH0001", "BEH0002"],
             )
 
+    def test_validation_subjects_can_come_from_split_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            manifest_path = os.path.join(tmp_dir, "split.json")
+            with open(manifest_path, "w", encoding="utf-8") as stream:
+                stream.write(
+                    '{"subjects": ['
+                    '{"subject": "TRAIN", "split": "train"},'
+                    '{"subject": "VAL2", "split": "held_out"},'
+                    '{"subject": "VAL1", "split": "validation"}'
+                    ']}'
+                )
+            self.assertEqual(
+                resolve_validation_subjects("unused.pt", split_manifest=manifest_path),
+                ["VAL1", "VAL2"],
+            )
+
 
 class TestOCTVolumeLogic(unittest.TestCase):
     """Tests curve rasterization and disc geometry extraction without requiring raw DICOM files."""
