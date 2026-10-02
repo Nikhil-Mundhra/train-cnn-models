@@ -354,6 +354,18 @@ def run_preflight(
     }
     p2_manifest_path.write_text(json.dumps(p2_payload, indent=2) + "\n", encoding="utf-8")
 
+    # Save Held-Out Validation Scans Manifest
+    val_manifest_path = output_dir / "held_out_validation_scans.json"
+    val_payload = {
+        "schema_version": 1,
+        "name": "rnfl_3d_held_out_validation_scans",
+        "description": "Held-out validation cohort: 20 subjects (40 scans) strictly disjoint from train",
+        "subject_count": len(held_out_confirmed),
+        "scan_count": len(ho_scans),
+        "scans": [asdict(s) for s in ho_scans],
+    }
+    val_manifest_path.write_text(json.dumps(val_payload, indent=2) + "\n", encoding="utf-8")
+
     # Save Orphans
     orphans_payload = {
         "orphan_count": len(orphans),
@@ -374,6 +386,7 @@ def run_preflight(
     print(f"  - Summary:    {summary_path.name}")
     print(f"  - Phase 1:    {p1_manifest_path.name}")
     print(f"  - Phase 2:    {p2_manifest_path.name}")
+    print(f"  - Validation: {val_manifest_path.name}")
     print(f"  - Orphans:    {orphans_path.name}")
 
     return summary_payload
