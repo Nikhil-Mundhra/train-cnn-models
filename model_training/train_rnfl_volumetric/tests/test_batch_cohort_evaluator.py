@@ -299,6 +299,37 @@ class TestClinicalMetricsCalculator(unittest.TestCase):
         self.assertTrue(scan_res.is_mirror)
         self.assertIsNone(scan_res.bad_dice)  # mirror metrics must be suppressed to None
 
+    def test_optional_volumetric_track_reports_true_3d_metrics(self):
+        vol = OCTVolume(
+            subject="BEH_3D",
+            eye="OD",
+            dcm_path="/dummy/dcm",
+            good_xml_path=None,
+            n_bscans=4,
+            rows=12,
+            cols=8,
+        )
+        ilm = np.full((4, 8), 3.0, dtype=np.float32)
+        nfl = np.full((4, 8), 7.0, dtype=np.float32)
+        vol._curves_good = {"ILM": ilm, "NFL": nfl}
+        vol._disc_geom = DiscGeometry(zc=2, xc=4, r_disc=2)
+        mask = np.zeros((4, 12, 8), dtype=np.uint8)
+        mask[:, 3:7, :] = 1
+        prediction = VolumePrediction(
+            mask=mask,
+            ilm_curve=ilm.copy(),
+            nfl_curve=nfl.copy(),
+            cup_probs=np.zeros((4, 8), dtype=np.float32),
+        )
+        result = ClinicalMetricsCalculator(
+            axial_res_um=AXIAL_RES_UM,
+            include_volumetric_metrics=True,
+        ).evaluate_scan(vol, prediction)
+        self.assertAlmostEqual(result.unet_dice_3d, 1.0)
+        self.assertAlmostEqual(result.unet_hd95_um, 0.0)
+        self.assertAlmostEqual(result.unet_asd_um, 0.0)
+        self.assertAlmostEqual(result.unet_volume_similarity, 1.0)
+
 
 class TestConfigurations(unittest.TestCase):
     """Verifies semantic configurations and spatial scale conversions."""

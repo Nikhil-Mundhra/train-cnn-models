@@ -132,7 +132,7 @@ def evaluate_pair(bad_xml_path, good_xml_path):
     return results
 
 
-def run_benchmark(dataset_root="/Users/nikhilmundhra/Library/CloudStorage/Box-Box/deidentified"):
+def run_benchmark(dataset_root="/Users/nikhilmundhra/Library/CloudStorage/Box-Box/OCT_Segmentations_Solix/deidentified-new"):
     """
     Runs the full baseline benchmark across all available bad vs good pairs.
     """

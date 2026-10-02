@@ -1,6 +1,6 @@
 # Phase 0: 3D RNFL Experiment Contract
 
-This phase must pass before production model or cohort-report integration.
+Phase 0 passed on 2026-10-02 using Jubail job `18555334` on `cn009` (NVIDIA A100-PCIE-40GB). The retained result is `artifacts/rnfl_3d_phase0_profile_18555334.json`.
 
 ## Frozen comparison population
 
@@ -35,7 +35,7 @@ Run this inside a 15-minute interactive Jubail allocation before implementing th
 
 ```bash
 salloc -p nvidia --gres=gpu:1 -c 4 -t 00:15:00
-/scratch/nm4358/envs/oct-env/bin/python \
+srun /scratch/nm4358/envs/oct-env/bin/python \
   model_training/train_rnfl_3d/profile_feasibility.py \
   --output /scratch/nm4358/rnfl_3d_phase0_profile.json
 ```
@@ -46,5 +46,7 @@ The default matrix tests `32x768x32`, `48x768x48`, and `64x768x64` at batch size
 2. peak reserved memory leaves at least 20% of the allocated GPU memory free;
 3. three measured steps complete with finite loss;
 4. the result JSON is retained with the experiment artifacts.
+
+Selected production starting point: `64x768x64`, bfloat16, micro-batch size 1, and gradient accumulation 8. It reserved 19.49 GiB of 39.49 GiB (50.65% headroom) at 0.499 seconds per measured training step. The batch-size-2 variant reserved 38.72 GiB and failed the headroom gate.
 
 If `64x768x64` fails, test an anatomy-preserving axial ROI with a stored global axial offset before reducing transverse context. Forward-pass count is not a speed claim: end-to-end inference latency must be measured separately. With a `64x64` transverse window and 50% overlap, a `320x320` volume requires 81 patches.

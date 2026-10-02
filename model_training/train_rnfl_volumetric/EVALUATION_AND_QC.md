@@ -54,6 +54,12 @@ before evaluation, and no subject in an evaluation split may have contributed
 B-scans, annotations, augmentation sources, threshold tuning, or checkpoint
 selection during training.
 
+For the decoupled post-training volumetric track, install the pinned evaluation
+requirements and add `--enable_volumetric_metrics`. This computes face-connected
+3D Hausdorff, HD95, ASD, Dice, and bounded volume similarity in physical units.
+It is intentionally opt-in because full-volume surface distance transforms are
+CPU- and memory-intensive and should not run inside GPU epoch validation.
+
 ## Automatic review routing
 
 Each run writes `manual_review_queue.json` and `manual_review_queue.csv`.

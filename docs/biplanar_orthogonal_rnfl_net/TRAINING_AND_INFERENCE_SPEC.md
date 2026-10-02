@@ -45,7 +45,7 @@ sbatch model_training/train_rnfl_volumetric/train_rnfl_biplanar_jubail.slurm
 ```bash
 python model_training/train_rnfl_volumetric/batch_cohort_evaluator.py \
     --checkpoint ./checkpoints/best_volumetric_rnfl_net.pt \
-    --dataset_root /Users/nikhilmundhra/Library/CloudStorage/Box-Box/deidentified \
+    --dataset_root /Users/nikhilmundhra/Library/CloudStorage/Box-Box/OCT_Segmentations_Solix/deidentified-new \
     --arm good \
     --batch_size 8 \
     --device mps

@@ -161,7 +161,7 @@ class SolixRNFLDataset(Dataset):
     """
     def __init__(
         self,
-        dataset_root="/Users/nikhilmundhra/Library/CloudStorage/Box-Box/deidentified",
+        dataset_root="/Users/nikhilmundhra/Library/CloudStorage/Box-Box/OCT_Segmentations_Solix/deidentified-new",
         subjects=None,
         arm="good",
         protocol="Disc Cube",

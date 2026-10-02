@@ -3,7 +3,7 @@
 Automated deep learning model architecture and training pipeline for volumetric segmentation and boundary extraction of the **Retinal Nerve Fiber Layer (RNFL)** directly from Optovue Solix OCT DICOM volumes (`Disc Cube` and `Retina Cube`).
 
 Trained and benchmarked against a human-reviewed reference from:
-`/Users/nikhilmundhra/Library/CloudStorage/Box-Box/deidentified`
+`/Users/nikhilmundhra/Library/CloudStorage/Box-Box/OCT_Segmentations_Solix/deidentified-new`
 
 ---
 
@@ -137,7 +137,7 @@ export KMP_DUPLICATE_LIB_OK=TRUE
 ### Launching Multi-Epoch Training
 ```bash
 .venv/bin/python model_training/train_rnfl_volumetric/train.py \
-    --dataset_root "/Users/nikhilmundhra/Library/CloudStorage/Box-Box/deidentified" \
+    --dataset_root "/Users/nikhilmundhra/Library/CloudStorage/Box-Box/OCT_Segmentations_Solix/deidentified-new" \
     --val_subjects "BEH0335,BEH0314,BEH0086" \
     --epochs 15 \
     --batch_size 4 \
@@ -189,11 +189,19 @@ Training runs directly on the NYUAD Jubail HPC cluster using SLURM, NVIDIA GPU a
 * **Repository Location**: `~/train-cnn-models` (code resides in `/home`, fast I/O data resides on `/scratch`).
 * **Partition & Resources**: `#SBATCH -p nvidia` with `--gres=gpu:a100:1` (or `--gres=gpu:1`), `-c 8` CPU cores, and `--mem=32G`.
 
-### Step 1: Transfer Dataset to Jubail Scratch
-From your local terminal:
+### Step 1: Transfer Dataset to Jubail Scratch (Direct Cloud-to-Cluster Streaming)
+Do **not** download unhydrated files to your local Mac SSD via Box Drive, as this can exhaust local disk cache. Instead, stream directly in-memory from Box API to Jubail SFTP using `rclone` (or the helper script):
+
 ```bash
-rsync -avhP "/Users/nikhilmundhra/Library/CloudStorage/Box-Box/deidentified/" \
-    nm4358@jubail.abudhabi.nyu.edu:/scratch/nm4358/deidentified/
+# Recommended: Stream directly via rclone (zero local Mac disk usage)
+rclone copy "rnfl-box:OCT_Segmentations_Solix/deidentified-new" "jubail:/scratch/nm4358/deidentified-new" \
+    --exclude "*Retina Cube*" \
+    --transfers 4 \
+    --checkers 8 \
+    -P -v
+
+# Or use the helper wrapper:
+./scripts/sync_jubail.sh push-new-data
 ```
 
 ### Step 2: Connect to Jubail & Pull Latest Code

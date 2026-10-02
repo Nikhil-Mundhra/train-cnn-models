@@ -29,7 +29,7 @@ from evaluate_baseline import compute_disc_geometry, load_curves
 class TestRNFLPipeline(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.dataset_root = "/Users/nikhilmundhra/Library/CloudStorage/Box-Box/deidentified"
+        cls.dataset_root = "/Users/nikhilmundhra/Library/CloudStorage/Box-Box/OCT_Segmentations_Solix/deidentified-new"
         cls.sample_subject = "BEH0181"
 
     def test_curve_loading_and_disc_geometry(self):

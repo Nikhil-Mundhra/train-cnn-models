@@ -254,7 +254,7 @@ gantt
     dateFormat  YYYY-MM-DD
     section Phase 0: Contracts & Feasibility
     Freeze comparison manifest and metric contract :done, p0a, 2026-10-02, 1d
-    Run A100 patch-size feasibility matrix          :p0b, after p0a, 1d
+    Run A100 patch-size feasibility matrix          :done, p0b, after p0a, 1d
     section Phase 1: Benchmark Standardization
     Integrate seg-metrics & dual-track evaluation engine  :p1, 2026-10-05, 5d
     Benchmark current BiPlanar model under seg-metrics   :p2, after p1, 3d
@@ -270,7 +270,7 @@ gantt
 
 ### HPC Execution Resource Allocation (NYUAD Jubail)
 * **Hardware & SLURM Directives**: Single NVIDIA A100 (40GB or 80GB), `#SBATCH -p nvidia --gres=gpu:a100:1 -c 8 --mem=48G`.
-* **Micro-Batching & Precision**: Mixed precision (`torch.autocast(dtype=torch.bfloat16)`) with micro-batch size $B_{\text{micro}}=2$ and gradient accumulation to an effective batch size of $8$ to prevent 3D activation memory exhaustion.
+* **Micro-Batching & Precision**: Jubail job `18555334` selected mixed bfloat16 precision with micro-batch size $B_{\text{micro}}=1$ and 8-step gradient accumulation. The $64\times768\times64$, batch-size-1 probe reserved 19.49 GiB on an A100 40GB; batch size 2 reserved 38.72 GiB and was rejected for insufficient headroom.
 * **GPU Daemon Protection**: Pre-cache volumes into memory (`pin_memory=True`), perform sliding-window Gaussian accumulation directly on GPU tensors, and avoid CPU-bound NumPy loops during in-training validation. Exhaustive CPU `seg-metrics` $\text{HD}_{95}$ calculations are strictly decoupled into post-training `batch_cohort_evaluator.py` runs to guarantee training GPU utilization stays $\ge 85\%$ and well above the $5\%$ kill threshold.
 * **Epoch Budget**: 25 epochs broad pre-training + 10 epochs human-audited fine-tuning with Cosine Annealing learning rate schedule ($\eta_{\max} = 3 \times 10^{-4}, \eta_{\min} = 10^{-6}$).
 
@@ -278,7 +278,7 @@ gantt
 
 ## 7. Immediate Next Steps
 
-1. **Run the A100 Feasibility Gate**: Execute `model_training/train_rnfl_3d/profile_feasibility.py` in a 15-minute Jubail interactive allocation and retain its JSON output. Select the largest patch/batch configuration with at least 20% GPU-memory headroom.
+1. **Implement the Selected Dense Backbone and Loader**: Use the Phase 0 selection of $(64,768,64)$, bfloat16, micro-batch 1, and 8-step gradient accumulation. Keep the first ablation limited to the dense voxel head.
 2. **Integrate the Tested Metric Adapter**: Connect `model_training/train_rnfl_3d/evaluation_metrics.py` to `batch_cohort_evaluator.py`, preserving whole-volume metrics separately from decoupled clinical surface metrics.
 3. **Benchmark the Frozen Baseline**: Use `manifests/successor_held_out_v1.json` for the primary successor-versus-current-BiPlanar comparison. Use `mutual_held_out_v1.json` only when older checkpoints with narrower validation sets are included.
 4. **Prototype the Dense 3D Backbone**: Implement the selected patch configuration and dense voxel head first. Add the NFL-absence and surface heads only through subsequent ablations; mask absent NFL supervision without discarding valid ILM supervision.

@@ -1,0 +1,23 @@
+{
+  "slurm_job_id": "18555334",
+  "node": "cn009",
+  "device": "NVIDIA A100-PCIE-40GB",
+  "total_device_memory_gib": 39.4935302734375,
+  "torch_version": "2.8.0+cu128",
+  "results": [
+    {"patch_shape": [32, 768, 32], "batch_size": 1, "precision": "bf16", "status": "ok", "parameters": 20903329, "peak_allocated_gib": 4.78667688369751, "peak_reserved_gib": 5.40234375, "mean_step_seconds": 0.15619543815652528, "error": ""},
+    {"patch_shape": [32, 768, 32], "batch_size": 2, "precision": "bf16", "status": "ok", "parameters": 20903329, "peak_allocated_gib": 9.29442834854126, "peak_reserved_gib": 9.984375, "mean_step_seconds": 0.20976899191737175, "error": ""},
+    {"patch_shape": [48, 768, 48], "batch_size": 1, "precision": "bf16", "status": "ok", "parameters": 20903329, "peak_allocated_gib": 10.419580936431885, "peak_reserved_gib": 11.341796875, "mean_step_seconds": 0.2904904695848624, "error": ""},
+    {"patch_shape": [48, 768, 48], "batch_size": 2, "precision": "bf16", "status": "ok", "parameters": 20903329, "peak_allocated_gib": 20.55474328994751, "peak_reserved_gib": 21.89453125, "mean_step_seconds": 0.4589444100856781, "error": ""},
+    {"patch_shape": [64, 768, 64], "batch_size": 1, "precision": "bf16", "status": "ok", "parameters": 20903329, "peak_allocated_gib": 18.30541467666626, "peak_reserved_gib": 19.48828125, "mean_step_seconds": 0.4993821990986665, "error": ""},
+    {"patch_shape": [64, 768, 64], "batch_size": 2, "precision": "bf16", "status": "ok", "parameters": 20903329, "peak_allocated_gib": 36.32671594619751, "peak_reserved_gib": 38.716796875, "mean_step_seconds": 0.8026099763810635, "error": ""}
+  ],
+  "decision": {
+    "patch_shape": [64, 768, 64],
+    "micro_batch_size": 1,
+    "gradient_accumulation_steps": 8,
+    "peak_reserved_gib": 19.48828125,
+    "reserved_memory_headroom_fraction": 0.5065449678701577,
+    "reason": "Largest tested transverse context satisfying the >=20% reserved-memory headroom gate. Batch size 2 leaves only ~2% headroom and is rejected."
+  }
+}

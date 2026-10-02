@@ -401,7 +401,7 @@ def train(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset_root", type=str, default="/Users/nikhilmundhra/Library/CloudStorage/Box-Box/deidentified")
+    parser.add_argument("--dataset_root", type=str, default="/Users/nikhilmundhra/Library/CloudStorage/Box-Box/OCT_Segmentations_Solix/deidentified-new")
     parser.add_argument("--val_subjects", type=str, default="BEH0335,BEH0314")
     parser.add_argument("--train_subjects", type=str, default="", help="Optional explicit comma-separated training subjects (for fine-tuning on audited subsets)")
     parser.add_argument("--protocol", type=str, default="Disc Cube", help="OCT scan protocol to train on (e.g. 'Disc Cube')")

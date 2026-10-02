@@ -225,7 +225,7 @@ def main():
     parser.add_argument(
         "--dataset_root",
         type=str,
-        default="/Users/nikhilmundhra/Library/CloudStorage/Box-Box/deidentified",
+        default="/Users/nikhilmundhra/Library/CloudStorage/Box-Box/OCT_Segmentations_Solix/deidentified-new",
         help="Path to deidentified root directory",
     )
     parser.add_argument(

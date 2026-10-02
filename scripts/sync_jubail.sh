@@ -14,46 +14,60 @@ NETID="${NETID:-nm4358}"
 HPC_HOST="${HPC_HOST:-jubail.abudhabi.nyu.edu}"
 SCRATCH_DIR="${HPC_SCRATCH:-/scratch/${NETID}}"
 LOCAL_DATA="${LOCAL_BOX_DATASET:-/Users/nikhilmundhra/Library/CloudStorage/Box-Box/deidentified}"
-LOCAL_NEW_DATA="${LOCAL_BOX_NEW_DATASET:-/Users/nikhilmundhra/Library/CloudStorage/Box-Box/deidentified-new}"
+LOCAL_NEW_DATA="${LOCAL_BOX_NEW_DATASET:-/Users/nikhilmundhra/Library/CloudStorage/Box-Box/OCT_Segmentations_Solix/deidentified-new}"
 
 ACTION="$1"
+
+RCLONE_BOX="${RCLONE_BOX_REMOTE:-rnfl-box}"
+RCLONE_JUBAIL="${RCLONE_JUBAIL_REMOTE:-jubail}"
+BOX_CLOUD_PATH="OCT_Segmentations_Solix/deidentified-new"
 
 check_disk() {
     local avail_gb=$(df -g / | awk 'NR==2 {print $4}')
     echo "[Storage] Local Mac available space on /: ${avail_gb} GB"
-    if [ "$avail_gb" -lt 20 ]; then
-        echo "  [WARNING] Free disk space is low (<20 GB). Do NOT run full cohort transfer."
-    fi
 }
 
 case "$ACTION" in
     push-new-data)
-        echo "=== Pushing Disc Cube scans & metadata from Box to Jubail ==="
-        check_disk
-        echo "Local source:  ${LOCAL_NEW_DATA}/"
-        echo "Remote dest:   ${NETID}@${HPC_HOST}:${SCRATCH_DIR}/deidentified-new/"
-        echo "Filter:        Excluding Retina Cube to prevent local disk exhaustion (saving ~30 GB)"
-        rsync -avhP \
-            --exclude='*Retina Cube*' \
-            --exclude='.DS_Store' \
-            "${LOCAL_NEW_DATA}/" \
-            "${NETID}@${HPC_HOST}:${SCRATCH_DIR}/deidentified-new/"
+        echo "=== Streaming Disc Cube scans & metadata directly from Box to Jubail (rclone) ==="
+        if command -v rclone &> /dev/null; then
+            echo "Source (Box API): ${RCLONE_BOX}:${BOX_CLOUD_PATH}"
+            echo "Dest (Jubail SFTP): ${RCLONE_JUBAIL}:${SCRATCH_DIR}/deidentified-new"
+            echo "Mode: Direct memory streaming (Zero local Mac disk storage used)"
+            echo "Filter: Excluding Retina Cube to conserve Jubail inodes & storage"
+            rclone copy "${RCLONE_BOX}:${BOX_CLOUD_PATH}" "${RCLONE_JUBAIL}:${SCRATCH_DIR}/deidentified-new" \
+                --exclude "*Retina Cube*" \
+                --transfers 4 \
+                --checkers 8 \
+                -P -v
+        else
+            echo "[Notice] rclone not detected. Falling back to local rsync..."
+            check_disk
+            rsync -avhP \
+                --exclude='*Retina Cube*' \
+                --exclude='.DS_Store' \
+                "${LOCAL_NEW_DATA}/" \
+                "${NETID}@${HPC_HOST}:${SCRATCH_DIR}/deidentified-new/"
+        fi
         ;;
     push-full-new-data)
-        echo "=== Pushing ENTIRE cohort (Disc Cube + Retina Cube) from Box to Jubail ==="
-        check_disk
-        avail_gb=$(df -g / | awk 'NR==2 {print $4}')
-        if [ "$avail_gb" -lt 36 ]; then
-            echo "[CAUTION] Full cohort requires ~36 GB cloud download into Box cache, but only ${avail_gb} GB is free!"
-            echo "Proceeding may cause disk space exhaustion. Press Ctrl+C within 5s to cancel..."
-            sleep 5
+        echo "=== Streaming ENTIRE cohort (Disc Cube + Retina Cube) from Box to Jubail (rclone) ==="
+        if command -v rclone &> /dev/null; then
+            echo "Source (Box API): ${RCLONE_BOX}:${BOX_CLOUD_PATH}"
+            echo "Dest (Jubail SFTP): ${RCLONE_JUBAIL}:${SCRATCH_DIR}/deidentified-new"
+            echo "Mode: Direct memory streaming (Zero local Mac disk storage used)"
+            rclone copy "${RCLONE_BOX}:${BOX_CLOUD_PATH}" "${RCLONE_JUBAIL}:${SCRATCH_DIR}/deidentified-new" \
+                --transfers 4 \
+                --checkers 8 \
+                -P -v
+        else
+            echo "[Notice] rclone not detected. Falling back to local rsync..."
+            check_disk
+            rsync -avhP \
+                --exclude='.DS_Store' \
+                "${LOCAL_NEW_DATA}/" \
+                "${NETID}@${HPC_HOST}:${SCRATCH_DIR}/deidentified-new/"
         fi
-        echo "Local source:  ${LOCAL_NEW_DATA}/"
-        echo "Remote dest:   ${NETID}@${HPC_HOST}:${SCRATCH_DIR}/deidentified-new/"
-        rsync -avhP \
-            --exclude='.DS_Store' \
-            "${LOCAL_NEW_DATA}/" \
-            "${NETID}@${HPC_HOST}:${SCRATCH_DIR}/deidentified-new/"
         ;;
     push-data)
         echo "=== Pushing legacy dataset from local Box to Jubail scratch ==="
@@ -75,12 +89,16 @@ case "$ACTION" in
         echo "=== Connecting to Jubail HPC ==="
         ssh "${NETID}@${HPC_HOST}"
         ;;
+    clean-legacy)
+        echo "=== Purging deprecated legacy cohort on Jubail (/scratch/${NETID}/deidentified) ==="
+        ssh "${NETID}@${HPC_HOST}" "rm -rf ${SCRATCH_DIR}/deidentified ${SCRATCH_DIR}/__MACOSX && echo 'Legacy directory deleted successfully.'"
+        ;;
     status)
         check_disk
         echo "Jubail Scratch Target: ${SCRATCH_DIR}/deidentified-new/"
         ;;
     *)
-        echo "Usage: $0 {push-new-data|push-full-new-data|push-data|pull-checkpoints|pull-reports|ssh|status}"
+        echo "Usage: $0 {push-new-data|push-full-new-data|push-data|pull-checkpoints|pull-reports|clean-legacy|ssh|status}"
         exit 1
         ;;
 esac

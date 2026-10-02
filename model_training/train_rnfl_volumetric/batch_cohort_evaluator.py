@@ -28,6 +28,9 @@ import scipy.ndimage
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+TRAIN_3D_DIR = SCRIPT_DIR.parent / "train_rnfl_3d"
+if str(TRAIN_3D_DIR) not in sys.path:
+    sys.path.insert(0, str(TRAIN_3D_DIR))
 
 from dataset import find_dicom_pixel_offset, load_curves, find_matching_curve_xml
 from model import VolumetricRNFLNet
@@ -45,6 +48,7 @@ from audit_analysis import (
     compute_audit_correction_metrics,
 )
 from spatial import AXIAL_UM, FAST_UM, SLOW_UM
+from evaluation_metrics import compute_volumetric_metrics
 
 AXIAL_RES_UM: float = AXIAL_UM
 
@@ -111,6 +115,11 @@ class ScanEvaluationResult:
     unet_mabe: float
     unet_p95: float
     unet_cup_iou: float
+    unet_dice_3d: Optional[float] = None
+    unet_hd_um: Optional[float] = None
+    unet_hd95_um: Optional[float] = None
+    unet_asd_um: Optional[float] = None
+    unet_volume_similarity: Optional[float] = None
     is_mirror: bool = False
     bad_dice: Optional[float] = None
     bad_mabe: Optional[float] = None
@@ -636,8 +645,9 @@ class ClinicalMetricsCalculator:
     against ground truth and commercial baseline curves.
     """
 
-    def __init__(self, axial_res_um: float = AXIAL_RES_UM):
+    def __init__(self, axial_res_um: float = AXIAL_RES_UM, include_volumetric_metrics: bool = False):
         self.axial_res_um = axial_res_um
+        self.include_volumetric_metrics = include_volumetric_metrics
 
     def evaluate_slice(
         self,
@@ -747,6 +757,20 @@ class ClinicalMetricsCalculator:
             axial_res_um=self.axial_res_um,
         )
 
+        volumetric = {}
+        if self.include_volumetric_metrics:
+            gt_mask_3d = np.stack(
+                [oct_volume.rasterize_curve_slice("good", index) for index in range(oct_volume.n_bscans)]
+            )
+            metrics_3d = compute_volumetric_metrics(gt_mask_3d, prediction.mask)
+            volumetric = {
+                "unet_dice_3d": metrics_3d.dice,
+                "unet_hd_um": metrics_3d.hd_um,
+                "unet_hd95_um": metrics_3d.hd95_um,
+                "unet_asd_um": metrics_3d.asd_um,
+                "unet_volume_similarity": metrics_3d.volume_similarity,
+            }
+
         return ScanEvaluationResult(
             subject=oct_volume.subject,
             eye=oct_volume.eye,
@@ -761,6 +785,7 @@ class ClinicalMetricsCalculator:
             bad_mabe=float(np.mean([m.nfl_mabe for m in slice_metrics_bad])) if has_valid_bad else None,
             bad_p95=float(np.mean([m.nfl_p95 for m in slice_metrics_bad])) if has_valid_bad else None,
             bad_cup_iou=float(np.mean([m.cup_iou for m in slice_metrics_bad])) if has_valid_bad else None,
+            **volumetric,
             **audit_metrics,
         )
 
@@ -952,6 +977,7 @@ class CohortEvaluatorPipeline:
         subject_filter: Optional[List[str]] = None,
         eye_filter: Optional[List[str]] = None,
         disc_cut_mode: str = "cup",
+        include_volumetric_metrics: bool = False,
     ):
         self.dataset_root = dataset_root
         self.output_dir = output_dir
@@ -963,6 +989,7 @@ class CohortEvaluatorPipeline:
         self.subject_filter = set(subject_filter or [])
         self.eye_filter = {eye.upper() for eye in (eye_filter or [])}
         self.disc_cut_mode = disc_cut_mode
+        self.include_volumetric_metrics = include_volumetric_metrics
 
         dev_str = device if ("mps" in device and torch.backends.mps.is_available()) or "cuda" in device else "cpu"
         self.device = torch.device(dev_str)
@@ -982,7 +1009,10 @@ class CohortEvaluatorPipeline:
             os_orientation_mode=self.os_orientation_mode,
             disc_cut_config=OpticDiscCutConfig(mode=self.disc_cut_mode),
         )
-        self.metrics_calc = ClinicalMetricsCalculator(axial_res_um=AXIAL_RES_UM)
+        self.metrics_calc = ClinicalMetricsCalculator(
+            axial_res_um=AXIAL_RES_UM,
+            include_volumetric_metrics=self.include_volumetric_metrics,
+        )
         self.visualizer = CohortVisualizer(output_dir=self.assets_dir)
 
     def discover_volumes(self) -> List[OCTVolume]:
@@ -1235,7 +1265,7 @@ class CohortEvaluatorPipeline:
 def main():
     parser = argparse.ArgumentParser(description="Object-Oriented Volumetric RNFL Cohort Evaluator")
     parser.add_argument("--checkpoint", type=str, required=True, help="Path to trained model checkpoint (.pt)")
-    parser.add_argument("--dataset_root", type=str, default="/Users/nikhilmundhra/Library/CloudStorage/Box-Box/deidentified-new")
+    parser.add_argument("--dataset_root", type=str, default="/Users/nikhilmundhra/Library/CloudStorage/Box-Box/OCT_Segmentations_Solix/deidentified-new")
     parser.add_argument("--output_dir", type=str, default="/Users/nikhilmundhra/Documents/Github/Capstone/OCT-Analyser-Capstone/docs")
     parser.add_argument(
         "--val_subjects",
@@ -1262,6 +1292,11 @@ def main():
     parser.add_argument("--split_manifest", type=str, default=None, help="Optional JSON/CSV subject-to-split manifest. Subjects absent from the manifest are excluded.")
     parser.add_argument("--subjects", type=str, default=None, help="Optional comma-separated subject filter for targeted or external evaluation.")
     parser.add_argument("--eyes", type=str, default=None, help="Optional comma-separated eye filter (OD,OS).")
+    parser.add_argument(
+        "--enable_volumetric_metrics",
+        action="store_true",
+        help="Compute CPU-intensive full-volume HD/HD95/ASD after inference.",
+    )
     args = parser.parse_args()
 
     val_subjects = resolve_validation_subjects(
@@ -1286,6 +1321,7 @@ def main():
         subject_filter=subject_filter,
         eye_filter=eye_filter,
         disc_cut_mode=args.disc_cut_mode,
+        include_volumetric_metrics=args.enable_volumetric_metrics,
     )
     pipeline.run()
 
