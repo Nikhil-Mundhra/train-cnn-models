@@ -68,6 +68,12 @@ ASSETS_DIR="${REPORT_DIR}/assets/executive_cohort_report"
 mkdir -p "${CHECKPOINT_DIR}"
 mkdir -p "${ASSETS_DIR}"
 
+SPLIT_MANIFEST="${REPO_DIR}/model_training/train_rnfl_3d/manifests/stratified_held_out_v2.json"
+TRAIN_MANIFEST="${REPO_DIR}/model_training/train_rnfl_3d/manifests/phase1_train_manifest.json"
+
+echo "Validation Split Manifest: ${SPLIT_MANIFEST}"
+echo "Training Cohort Manifest:   ${TRAIN_MANIFEST}"
+
 echo ""
 echo "##################################################################"
 echo "### STEP 1: TRAINING UPGRADED BI-PLANAR VOLUMETRIC U-NET       ###"
@@ -75,7 +81,8 @@ echo "##################################################################"
 
 "${PYTHON_BIN}" "${TRAIN_SCRIPT}" \
     --dataset_root "${DATASET_ROOT}" \
-    --val_subjects "BEH0335,BEH0314,BEH0174,BEH0310,BEH0354,BEH0086,BEH0090,BEH0096,BEH0241,BEH0284" \
+    --split_manifest "${SPLIT_MANIFEST}" \
+    --train_manifest "${TRAIN_MANIFEST}" \
     --epochs 20 \
     --base_channels 32 \
     --batch_size 32 \
@@ -106,7 +113,7 @@ echo "##################################################################"
     --checkpoint "${BEST_MODEL}" \
     --dataset_root "${DATASET_ROOT}" \
     --output_dir "${REPORT_DIR}" \
-    --val_subjects "BEH0335,BEH0314,BEH0174,BEH0310,BEH0354,BEH0086,BEH0090,BEH0096,BEH0241,BEH0284" \
+    --split_manifest "${SPLIT_MANIFEST}" \
     --os_orientation_mode "corrected" \
     --batch_size 8 \
     --device "cuda"

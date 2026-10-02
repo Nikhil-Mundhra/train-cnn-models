@@ -182,8 +182,17 @@ def train(args):
     if not all_subjects:
         all_subjects = raw_subjects
 
-    val_subjects = [s.strip() for s in args.val_subjects.split(',') if s.strip()]
-    if args.train_subjects:
+    if args.split_manifest:
+        val_subjects = evaluation_subjects(args.split_manifest)
+    else:
+        val_subjects = [s.strip() for s in args.val_subjects.split(',') if s.strip()]
+
+    if args.train_manifest:
+        with open(args.train_manifest, "r", encoding="utf-8") as f:
+            t_data = json.load(f)
+        t_subjs = t_data.get("subjects") or [s["subject"] for s in t_data.get("scans", [])]
+        train_subjects = sorted(set(t_subjs))
+    elif args.train_subjects:
         train_subjects = [s.strip() for s in args.train_subjects.split(',') if s.strip()]
     else:
         train_subjects = [s for s in all_subjects if s not in val_subjects]
@@ -404,6 +413,8 @@ if __name__ == "__main__":
     parser.add_argument("--dataset_root", type=str, default="/Users/nikhilmundhra/Library/CloudStorage/Box-Box/OCT_Segmentations_Solix/deidentified-new")
     parser.add_argument("--val_subjects", type=str, default="BEH0335,BEH0314")
     parser.add_argument("--train_subjects", type=str, default="", help="Optional explicit comma-separated training subjects (for fine-tuning on audited subsets)")
+    parser.add_argument("--split_manifest", type=str, default="", help="Optional JSON split manifest file containing held_out validation subjects")
+    parser.add_argument("--train_manifest", type=str, default="", help="Optional JSON manifest file containing explicit training subjects")
     parser.add_argument("--protocol", type=str, default="Disc Cube", help="OCT scan protocol to train on (e.g. 'Disc Cube')")
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch_size", type=int, default=4)
