@@ -15,7 +15,7 @@
 #SBATCH -n 1                           # 1 task
 #SBATCH -c 8                           # 8 CPU cores for data loading
 #SBATCH --mem=48G                      # 48 GB system memory
-#SBATCH -t 08:00:00                    # Wall clock time limit (8 hours)
+#SBATCH -t 18:00:00                    # Wall clock time limit (18 hours)
 #SBATCH -J rnfl_3d                     # Job name
 #SBATCH -o slurm_rnfl_3d_%j.out        # Standard output log (%j expands to jobID)
 #SBATCH -e slurm_rnfl_3d_%j.err        # Standard error log
@@ -66,6 +66,15 @@ if [ ! -f "${VAL_MANIFEST}" ]; then
     VAL_MANIFEST="${REPO_DIR}/model_training/train_rnfl_3d/manifests/stratified_held_out_v2.json"
 fi
 
+RESUME_FLAG=""
+if [ -n "$1" ] && [ -f "$1" ]; then
+    RESUME_FLAG="--resume $1"
+    echo "[Resume] Resuming training from: $1"
+elif [ -f "${SCRATCH_DIR}/checkpoints/rnfl_3d_18563530/latest_rnfl_3d_net.pt" ]; then
+    RESUME_FLAG="--resume ${SCRATCH_DIR}/checkpoints/rnfl_3d_18563530/latest_rnfl_3d_net.pt"
+    echo "[Resume] Auto-detected previous checkpoint: ${SCRATCH_DIR}/checkpoints/rnfl_3d_18563530/latest_rnfl_3d_net.pt"
+fi
+
 echo "Training Manifest:   ${TRAIN_MANIFEST}"
 echo "Validation Manifest: ${VAL_MANIFEST}"
 echo "Checkpoint Output:   ${CHECKPOINT_DIR}"
@@ -80,6 +89,7 @@ echo "##################################################################"
     --train_manifest "${TRAIN_MANIFEST}" \
     --val_manifest "${VAL_MANIFEST}" \
     --checkpoint_dir "${CHECKPOINT_DIR}" \
+    ${RESUME_FLAG} \
     --patch_shape 64 768 64 \
     --patches_per_volume 32 \
     --base_channels 32 \
