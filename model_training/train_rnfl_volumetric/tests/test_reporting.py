@@ -402,5 +402,62 @@ class TestReExportsAndCLI(unittest.TestCase):
             self.assertTrue(callable(getattr(build_cohort_report, sym)))
 
 
+class TestDeepDiveAdaptiveLayout(unittest.TestCase):
+    """Verifies that CohortVisualizer renders 3-arm vs 2-arm adaptive deep dive panels."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        from batch_cohort_evaluator import CohortVisualizer
+        self.visualizer = CohortVisualizer(self.temp_dir.name)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def _create_mock_volume(self, has_bad: bool):
+        from types import SimpleNamespace
+        import numpy as np
+
+        disc_geometry = SimpleNamespace(zc=160, xc=160, yc=300, radius_px=45.0)
+        memmap = np.zeros((320, 768, 320), dtype=np.uint8)
+        curves_good = {'NFL': np.full((320, 320), 280.0, dtype=np.float32)}
+        curves_bad = {'NFL': np.full((320, 320), 310.0, dtype=np.float32)} if has_bad else None
+
+        def rasterize_curve_slice(tier, z):
+            mask = np.zeros((768, 320), dtype=np.uint8)
+            y_base = 280 if tier == "good" else 310
+            mask[y_base:y_base + 20, :] = 1
+            return mask
+
+        oct_volume = SimpleNamespace(
+            subject="BEH9999",
+            eye="OD",
+            disc_geometry=disc_geometry,
+            memmap=memmap,
+            curves_good=curves_good,
+            curves_bad=curves_bad,
+            rasterize_curve_slice=rasterize_curve_slice,
+        )
+        prediction = SimpleNamespace(
+            mask=np.zeros((320, 768, 320), dtype=np.uint8)
+        )
+        prediction.mask[:, 280:300, :] = 1
+        return oct_volume, prediction
+
+    def test_render_deep_dive_with_bad_curves_3arm(self):
+        vol, pred = self._create_mock_volume(has_bad=True)
+        fname = self.visualizer.render_deep_dive_panel(vol, pred)
+        out_file = os.path.join(self.temp_dir.name, fname)
+        self.assertTrue(os.path.exists(out_file))
+        self.assertGreater(os.path.getsize(out_file), 1000)
+
+    def test_render_deep_dive_without_bad_curves_2arm(self):
+        vol, pred = self._create_mock_volume(has_bad=False)
+        fname = self.visualizer.render_deep_dive_panel(vol, pred)
+        out_file = os.path.join(self.temp_dir.name, fname)
+        self.assertTrue(os.path.exists(out_file))
+        self.assertGreater(os.path.getsize(out_file), 1000)
+
+
 if __name__ == "__main__":
     unittest.main()
+

@@ -528,18 +528,19 @@ Central peripapillary OD B-scans ($z = z_{{\\text{{disc}}}}$) comparing the **Hu
 
 ---
 
-## 7. 3-Arm Deep-Dive Panels: Validation & Archetype Subjects
+## 7. Cross-Sectional Deep-Dive Panels: Validation & Archetype Subjects
 
-Detailed cross-sectional analysis comparing optical intensity boundaries, vertical cut behavior, and local layer transitions across key clinical archetypes.
+Detailed cross-sectional analysis comparing optical intensity boundaries, vertical cut behavior, and local layer transitions across key clinical archetypes. For human-audited scans with manual edits, full 3-arm panels show the Commercial Solix baseline alongside Reference and U-Net; for scans accepted without edits, the redundant commercial arm is omitted to present expanded, high-resolution views of the Reference Algorithm and Volumetric U-Net.
 
 """
 
     for dd in deep_dives:
         subj = dd['subject']
+        eye = dd.get('eye', 'OD')
         fname = os.path.basename(dd['filename'])
         cohort_tag = dd.get('cohort', '')
         md += f"""<div class="deep-dive-item">
-<h3>Subject {subj} (OD) [{cohort_tag}]</h3>
+<h3>Subject {subj} ({eye}) [{cohort_tag}]</h3>
 <img src="{assets_rel_dir}/{fname}" alt="Deep Dive {subj}" />
 </div>
 

@@ -859,16 +859,16 @@ class CohortVisualizer:
             m_b = oct_volume.rasterize_curve_slice("good", b_i)
             enface_cyan[b_i] = m_b[y_enface, :]
 
-        fig, axs = plt.subplots(2, 3, figsize=(20, 12), facecolor="black", constrained_layout=True)
-        arms = [
-            ("Reference Algorithm (Cyan)", mask_cyan, [0.0, 0.8, 1.0]),
-            ("Commercial Solix (Red)", mask_red, [1.0, 0.2, 0.2]),
-            ("Volumetric U-Net (Green)", mask_green, [0.1, 0.95, 0.3])
-        ]
+        has_distinct_red = (
+            mask_red is not None
+            and np.any(mask_red > 0)
+            and not np.array_equal(mask_red, mask_cyan)
+        )
 
-        # Row 0: Full B-Scans across 3 arms
-        for col_idx, (title, mask, color) in enumerate(arms):
-            ax = axs[0, col_idx]
+        fig = plt.figure(figsize=(20, 12), facecolor="black", constrained_layout=True)
+        gs = fig.add_gridspec(2, 6)
+
+        def _draw_bscan(ax, title, mask, color, is_ref_arm=False):
             ax.imshow(raw_bscan, cmap="gray", aspect="auto")
             if mask is not None:
                 overlay = np.zeros((*raw_bscan.shape, 4), dtype=np.float32)
@@ -882,13 +882,29 @@ class CohortVisualizer:
 
             ax.set_title(f"{title}\nCentral B-scan {zc}", color="white", fontsize=11, fontweight="bold")
             ax.set_ylim(440, 180)
-            if col_idx == 0:
+            if is_ref_arm:
                 ax.add_patch(Rectangle((60, 220), 80, 150, fill=False, edgecolor="#f8fafc", linewidth=1.4, linestyle="--"))
                 ax.add_patch(Rectangle((180, 220), 80, 150, fill=False, edgecolor="#f8fafc", linewidth=1.4, linestyle="--"))
             ax.axis("off")
 
+        if has_distinct_red:
+            ax_cyan = fig.add_subplot(gs[0, 0:2])
+            ax_red = fig.add_subplot(gs[0, 2:4])
+            ax_green = fig.add_subplot(gs[0, 4:6])
+
+            _draw_bscan(ax_cyan, "Reference Algorithm (Cyan)", mask_cyan, [0.0, 0.8, 1.0], is_ref_arm=True)
+            _draw_bscan(ax_red, "Commercial Solix (Red)", mask_red, [1.0, 0.2, 0.2], is_ref_arm=False)
+            _draw_bscan(ax_green, "Volumetric U-Net (Green)", mask_green, [0.1, 0.95, 0.3], is_ref_arm=False)
+        else:
+            # Commercial red mask is not present or identical to reference; expand blue and green across Row 0
+            ax_cyan = fig.add_subplot(gs[0, 0:3])
+            ax_green = fig.add_subplot(gs[0, 3:6])
+
+            _draw_bscan(ax_cyan, "Reference Algorithm (Cyan) [Commercial Accepted]", mask_cyan, [0.0, 0.8, 1.0], is_ref_arm=True)
+            _draw_bscan(ax_green, "Volumetric U-Net (Green)", mask_green, [0.1, 0.95, 0.3], is_ref_arm=False)
+
         # Row 1, Col 0: Nasal Rim Zoom
-        ax_left = axs[1, 0]
+        ax_left = fig.add_subplot(gs[1, 0:2])
         ax_left.imshow(raw_bscan, cmap="gray", aspect="auto")
         over_l = np.zeros((*raw_bscan.shape, 4), dtype=np.float32)
         over_l[mask_cyan == 1] = [0.0, 0.8, 1.0, 0.16]
@@ -900,7 +916,7 @@ class CohortVisualizer:
         ax_left.axis("off")
 
         # Row 1, Col 1: Temporal Rim Zoom
-        ax_right = axs[1, 1]
+        ax_right = fig.add_subplot(gs[1, 2:4])
         ax_right.imshow(raw_bscan, cmap="gray", aspect="auto")
         over_r = np.zeros((*raw_bscan.shape, 4), dtype=np.float32)
         over_r[mask_cyan == 1] = [0.0, 0.8, 1.0, 0.16]
@@ -912,7 +928,7 @@ class CohortVisualizer:
         ax_right.axis("off")
 
         # Row 1, Col 2: En Face Mid-Rim
-        ax_ef = axs[1, 2]
+        ax_ef = fig.add_subplot(gs[1, 4:6])
         ax_ef.imshow(enface_raw, cmap="gray", aspect="auto")
         over_ef = np.zeros((*enface_raw.shape, 4), dtype=np.float32)
         over_ef[enface_cyan == 1] = [0.0, 0.8, 1.0, 0.16]
