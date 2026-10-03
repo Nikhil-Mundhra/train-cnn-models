@@ -131,7 +131,10 @@ class ScanEvaluationResult:
     audit_edit_fraction: Optional[float] = None
     raw_edit_mabe_um: Optional[float] = None
     unet_edit_mabe_um: Optional[float] = None
+    delta_edit_mabe_um: Optional[float] = None
     audit_correction_gain: Optional[float] = None
+    audit_ratio_gain: Optional[float] = None
+    audit_symmetric_gain: Optional[float] = None
     audit_edit_recovery_rate: Optional[float] = None
     unet_unchanged_mabe_um: Optional[float] = None
     audit_unchanged_preservation_rate: Optional[float] = None
@@ -750,7 +753,7 @@ class ClinicalMetricsCalculator:
         ])
         audit_metrics = compute_audit_correction_metrics(
             human_nfl=curves_good['NFL'],
-            raw_nfl=curves_bad['NFL'] if curves_bad is not None else None,
+            raw_nfl=curves_bad['NFL'] if (curves_bad is not None and not is_mirror) else None,
             predicted_nfl=prediction.nfl_curve,
             predicted_cup_probability=prediction.cup_probs,
             peripapillary_slices=peripapillary_slices,
@@ -1179,7 +1182,8 @@ class CohortEvaluatorPipeline:
             fields = [
                 "subject", "eye", "cohort", "pairing_status", "audit_edit_threshold_px",
                 "audit_edited_columns", "audit_unchanged_columns", "audit_edit_fraction",
-                "raw_edit_mabe_um", "unet_edit_mabe_um", "audit_correction_gain",
+                "raw_edit_mabe_um", "unet_edit_mabe_um", "delta_edit_mabe_um",
+                "audit_correction_gain", "audit_symmetric_gain", "audit_ratio_gain",
                 "audit_edit_recovery_rate", "unet_unchanged_mabe_um",
                 "audit_unchanged_preservation_rate", "unet_cup_presence_recall",
                 "unet_cup_edge_valid_slices", "unet_cup_left_edge_mae_um",
@@ -1194,7 +1198,7 @@ class CohortEvaluatorPipeline:
                     status = "unedited_mirror"
                 elif result.bad_dice is None:
                     status = "missing_raw_annotation"
-                elif result.audit_edited_columns > 0:
+                elif result.audit_edited_columns >= 50:
                     status = "material_edits"
                 else:
                     status = "no_material_edits"

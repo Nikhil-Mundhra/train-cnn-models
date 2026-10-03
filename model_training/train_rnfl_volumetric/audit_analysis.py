@@ -48,7 +48,10 @@ def compute_audit_correction_metrics(
         "audit_edit_fraction": None,
         "raw_edit_mabe_um": None,
         "unet_edit_mabe_um": None,
+        "delta_edit_mabe_um": None,
         "audit_correction_gain": None,
+        "audit_ratio_gain": None,
+        "audit_symmetric_gain": None,
         "audit_edit_recovery_rate": None,
         "unet_unchanged_mabe_um": None,
         "audit_unchanged_preservation_rate": None,
@@ -82,9 +85,19 @@ def compute_audit_correction_metrics(
         if n_edited:
             raw_edit_mabe = float(np.mean(raw_error_px[edited]) * axial_res_um)
             unet_edit_mabe = float(np.mean(unet_error_px[edited]) * axial_res_um)
+            delta_edit_mabe = raw_edit_mabe - unet_edit_mabe
+            denom = raw_edit_mabe + unet_edit_mabe
+            ratio_gain = 1.0 - (unet_edit_mabe / raw_edit_mabe) if raw_edit_mabe > 1e-6 else 0.0
+
             result["raw_edit_mabe_um"] = raw_edit_mabe
             result["unet_edit_mabe_um"] = unet_edit_mabe
-            result["audit_correction_gain"] = 1.0 - (unet_edit_mabe / raw_edit_mabe)
+            result["delta_edit_mabe_um"] = delta_edit_mabe
+            # Symmetric bounded gain in [-1.0, +1.0]: (E_raw - E_unet) / (E_raw + E_unet)
+            result["audit_symmetric_gain"] = float(delta_edit_mabe / denom) if denom > 1e-6 else 0.0
+            # Unclamped ratio gain: 1.0 - (E_unet / E_raw)
+            result["audit_ratio_gain"] = float(ratio_gain)
+            # Clamped ratio gain in [-1.0, +1.0] for stable visualization and bounded outlier prevention
+            result["audit_correction_gain"] = float(max(-1.0, min(1.0, ratio_gain)))
             result["audit_edit_recovery_rate"] = float(np.mean(unet_error_px[edited] < raw_error_px[edited]))
 
         if n_unchanged:

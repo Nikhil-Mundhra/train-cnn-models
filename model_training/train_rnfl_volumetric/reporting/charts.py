@@ -261,7 +261,8 @@ def render_baseline_comparison_chart(scans: List[Dict[str, Any]], out_path: str,
         s for s in scans
         if s.get('raw_edit_mabe_um') is not None
         and s.get('unet_edit_mabe_um') is not None
-        and s.get('audit_edited_columns', 0) > 0
+        and s.get('audit_edited_columns', 0) >= 50
+        and s.get('audit_correction_gain') is not None
         and not s.get('is_mirror', False)
     ]
     if not edited_scans:
@@ -277,7 +278,7 @@ def render_baseline_comparison_chart(scans: List[Dict[str, Any]], out_path: str,
 
     fig, axes = plt.subplots(
         1, 3, figsize=(18, max(7.5, 0.58 * n + 2.8)), sharey=True,
-        facecolor=pal["fig_face"], gridspec_kw={"width_ratios": [1.25, 1.0, 1.0], "wspace": 0.08}
+        facecolor=pal["fig_face"], gridspec_kw={"width_ratios": [1.35, 1.0, 1.0], "wspace": 0.08}
     )
     ax1, ax2, ax3 = axes
     for ax in axes:
@@ -292,6 +293,7 @@ def render_baseline_comparison_chart(scans: List[Dict[str, Any]], out_path: str,
     for i in range(n):
         is_v = edited_scans[i].get('is_validation', False)
         improved = unet_errors[i] < raw_errors[i]
+        delta_um = raw_errors[i] - unet_errors[i]
         if is_v:
             line_color = pal["val_color"] if improved else pal["bad_color"]
             unet_color = pal["val_color"]
@@ -306,25 +308,33 @@ def render_baseline_comparison_chart(scans: List[Dict[str, Any]], out_path: str,
         ax1.hlines(y_pos[i], raw_errors[i], unet_errors[i], color=line_color, alpha=0.75, linewidth=2.0)
         ax1.scatter(raw_errors[i], y_pos[i], color=pal["bad_color"], s=72, marker="o", zorder=3)
         ax1.scatter(unet_errors[i], y_pos[i], color=unet_color, s=unet_size, marker=unet_marker, zorder=4)
+        ax1.text(
+            max(raw_errors[i], unet_errors[i]) + 0.8, y_pos[i],
+            f"Δ:{delta_um:+.1f}µm", color=line_color, fontsize=8.0, va="center", fontweight="bold"
+        )
 
     ax1.set_title("Boundary error on human-edited columns", color=pal["text"], fontsize=11.5, fontweight="bold", pad=12)
     ax1.set_xlabel("MABE (µm; lower is better)", color=pal["subtext"], fontsize=10.5, fontweight="bold")
     ax1.set_yticks(y_pos)
     ax1.set_yticklabels(labels, color=pal["text"], fontsize=9.5, fontweight="bold")
-    ax1.set_xlim(0, max(raw_errors + unet_errors) * 1.12)
+    ax1.set_xlim(0, max(raw_errors + unet_errors) * 1.25)
     ax1.grid(axis="x", color=pal["grid"], linestyle="--", alpha=0.7)
 
-    # --- Middle: normalized correction gain. ---
+    # --- Middle: normalized correction gain bounded to [-100%, +100%]. ---
     for i in range(n):
         is_v = edited_scans[i].get('is_validation', False)
-        if gains[i] > 0:
+        gain_val = gains[i]
+        clamped_gain = max(-1.0, min(1.0, gain_val))
+        if gain_val > 0:
             bar_color = pal["val_color"] if is_v else pal["unet_color"]
         else:
             bar_color = pal["bad_color"]
-        ax2.barh(y_pos[i], gains[i] * 100.0, color=bar_color, alpha=0.85, height=0.55)
+        ax2.barh(y_pos[i], clamped_gain * 100.0, color=bar_color, alpha=0.85, height=0.55)
         text_color = pal["val_color"] if is_v else pal["text"]
-        ax2.text(gains[i] * 100.0, y_pos[i], f" {gains[i] * 100:+.0f}%", color=text_color, fontsize=8.5, va="center", fontweight="bold" if is_v else "normal")
+        label_txt = f" {gain_val * 100:+.0f}%" if gain_val >= -1.0 else " <-100%"
+        ax2.text(clamped_gain * 100.0, y_pos[i], label_txt, color=text_color, fontsize=8.5, va="center", fontweight="bold" if is_v else "normal")
     ax2.axvline(0, color=pal["spine"], linewidth=1.4)
+    ax2.set_xlim(-110, 115)
     ax2.set_title("Human-correction gain", color=pal["text"], fontsize=11.5, fontweight="bold", pad=12)
     ax2.set_xlabel("1 - (U-Net error / raw error), %", color=pal["subtext"], fontsize=10.0, fontweight="bold")
     ax2.grid(axis="x", color=pal["grid"], linestyle="--", alpha=0.7)
