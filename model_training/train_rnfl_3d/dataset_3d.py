@@ -299,6 +299,8 @@ def predict_whole_volume_mask(
     use_amp: bool = True,
     amp_dtype: torch.dtype = torch.bfloat16,
     standardize_eye: bool = True,
+    return_probs: bool = False,
+    batch_size: int = 4,
 ) -> np.ndarray:
     """Run sliding-window 3D inference across full 320x768x320 volume with overlap blending."""
     model.eval()
@@ -326,35 +328,45 @@ def predict_whole_volume_mask(
 
     autocast_device = "cuda" if "cuda" in str(device) else ("mps" if "mps" in str(device) else "cpu")
 
+    starts = [(z, x) for z in z_starts for x in x_starts]
+
     with torch.no_grad():
-        for z_start in z_starts:
-            for x_start in x_starts:
+        for i in range(0, len(starts), batch_size):
+            batch_starts = starts[i : i + batch_size]
+            batch_patches = []
+            batch_targets = []
+            for z_start, x_start in batch_starts:
                 z_slice = slice(z_start, z_start + patch_d)
                 if is_os:
                     native_x_slice = slice(width - x_start - patch_w, width - x_start)
+                    target_slice = slice(width - x_start - patch_w, width - x_start)
                 else:
                     native_x_slice = slice(x_start, x_start + patch_w)
+                    target_slice = slice(x_start, x_start + patch_w)
 
                 patch_raw = np.asarray(volume[z_slice, :patch_h, native_x_slice], dtype=np.float32)
                 if is_os:
                     patch_raw = np.flip(patch_raw, axis=-1).copy()
 
                 patch_norm = np.clip(patch_raw / 2560.0, 0.0, 1.0)
-                input_tensor = torch.from_numpy(patch_norm).unsqueeze(0).unsqueeze(0).to(device)
+                batch_patches.append(patch_norm)
+                batch_targets.append((z_slice, target_slice))
 
-                with torch.autocast(device_type=autocast_device, dtype=amp_dtype, enabled=use_amp):
-                    preds = model(input_tensor)
-                    logits = preds["mask_logits"]
-                    probs = torch.sigmoid(logits).squeeze(0).squeeze(0).float().cpu().numpy()
+            batch_tensor = torch.from_numpy(np.stack(batch_patches, axis=0)).unsqueeze(1).to(device)
 
+            with torch.autocast(device_type=autocast_device, dtype=amp_dtype, enabled=use_amp):
+                preds = model(batch_tensor)
+                logits = preds["mask_logits"]
+                b_probs = torch.sigmoid(logits).squeeze(1).float().cpu().numpy()
+
+            for j, (z_slice, target_slice) in enumerate(batch_targets):
+                p = b_probs[j]
                 if is_os:
-                    probs = np.flip(probs, axis=-1).copy()
-                    native_x_slice_target = slice(width - x_start - patch_w, width - x_start)
-                else:
-                    native_x_slice_target = slice(x_start, x_start + patch_w)
-
-                prob_accum[z_slice, :patch_h, native_x_slice_target] += probs * weight_patch
-                count_accum[z_slice, :patch_h, native_x_slice_target] += weight_patch
+                    p = np.flip(p, axis=-1).copy()
+                prob_accum[z_slice, :patch_h, target_slice] += p * weight_patch
+                count_accum[z_slice, :patch_h, target_slice] += weight_patch
 
     final_probs = prob_accum / np.maximum(count_accum, 1e-6)
+    if return_probs:
+        return final_probs
     return (final_probs > threshold).astype(np.uint8)

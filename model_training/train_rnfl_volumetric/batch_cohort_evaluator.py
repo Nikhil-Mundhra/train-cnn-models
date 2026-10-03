@@ -68,7 +68,7 @@ def resolve_validation_subjects(
     if not raw_subjects:
         checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         if isinstance(checkpoint, dict):
-            raw_subjects = (checkpoint.get("args") or {}).get("val_subjects")
+            raw_subjects = checkpoint.get("val_subjects") or (checkpoint.get("args") or {}).get("val_subjects")
     if not raw_subjects:
         raise ValueError(
             "Validation subjects are absent from the checkpoint metadata; "
@@ -671,11 +671,11 @@ class ClinicalMetricsCalculator:
         dice = (2.0 * intersection / total) if total > 0 else 1.0
 
         # 2. NFL Boundary Error (MABE & P95)
-        valid_nfl = ~np.isnan(gt_nfl) & (gt_nfl > 0)
+        valid_nfl = ~np.isnan(gt_nfl) & (gt_nfl > 0) & ~np.isnan(pred_nfl)
         if np.sum(valid_nfl) > 0:
             errors = np.abs(pred_nfl[valid_nfl] - gt_nfl[valid_nfl]) * self.axial_res_um
-            mabe = float(np.mean(errors))
-            p95 = float(np.percentile(errors, 95))
+            mabe = float(np.nanmean(errors))
+            p95 = float(np.nanpercentile(errors, 95))
         else:
             mabe, p95 = 0.0, 0.0
 
@@ -997,6 +997,8 @@ class CohortEvaluatorPipeline:
         eye_filter: Optional[List[str]] = None,
         disc_cut_mode: str = "cup",
         include_volumetric_metrics: bool = False,
+        model_family: str = "auto",
+        val_stride: int = 32,
     ):
         self.dataset_root = dataset_root
         self.output_dir = output_dir
@@ -1009,6 +1011,8 @@ class CohortEvaluatorPipeline:
         self.eye_filter = {eye.upper() for eye in (eye_filter or [])}
         self.disc_cut_mode = disc_cut_mode
         self.include_volumetric_metrics = include_volumetric_metrics
+        self.model_family = model_family
+        self.val_stride = val_stride
 
         dev_str = device if ("mps" in device and torch.backends.mps.is_available()) or "cuda" in device else "cpu"
         self.device = torch.device(dev_str)
@@ -1016,18 +1020,48 @@ class CohortEvaluatorPipeline:
         self.assets_dir = os.path.join(self.output_dir, "assets", "executive_cohort_report")
         os.makedirs(self.assets_dir, exist_ok=True)
 
-        print(
-            f"[Cohort Pipeline] Initializing VolumetricRNFLPredictor on {self.device} "
-            f"(batch_size={self.batch_size}, biplanar_fusion={self.biplanar_fusion}, "
-            f"os_orientation_mode={self.os_orientation_mode}, disc_cut_mode={self.disc_cut_mode})..."
-        )
-        self.predictor = VolumetricRNFLPredictor.from_checkpoint(
-            checkpoint_path,
-            self.device,
-            batch_size=self.batch_size,
-            os_orientation_mode=self.os_orientation_mode,
-            disc_cut_config=OpticDiscCutConfig(mode=self.disc_cut_mode),
-        )
+        # Auto-detect or select model family
+        ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        is_3d = False
+        if model_family == "3d":
+            is_3d = True
+        elif model_family == "2.5d":
+            is_3d = False
+        else:
+            if isinstance(ckpt, dict):
+                if "config" in ckpt and hasattr(ckpt["config"], "strides"):
+                    is_3d = True
+                elif "model_state" in ckpt and any("encoder0" in k for k in ckpt["model_state"].keys()):
+                    is_3d = True
+
+        if is_3d:
+            from predictor_3d import Anisotropic3DPredictor
+            print(
+                f"[Cohort Pipeline] Initializing Anisotropic3DPredictor on {self.device} "
+                f"(stride={self.val_stride}, os_orientation_mode={self.os_orientation_mode}, "
+                f"disc_cut_mode={self.disc_cut_mode})..."
+            )
+            self.predictor = Anisotropic3DPredictor.from_checkpoint(
+                checkpoint_path,
+                self.device,
+                batch_size=self.batch_size,
+                stride=(self.val_stride, self.val_stride),
+                disc_cut_config=OpticDiscCutConfig(mode=self.disc_cut_mode),
+                os_orientation_mode=self.os_orientation_mode,
+            )
+        else:
+            print(
+                f"[Cohort Pipeline] Initializing VolumetricRNFLPredictor on {self.device} "
+                f"(batch_size={self.batch_size}, biplanar_fusion={self.biplanar_fusion}, "
+                f"os_orientation_mode={self.os_orientation_mode}, disc_cut_mode={self.disc_cut_mode})..."
+            )
+            self.predictor = VolumetricRNFLPredictor.from_checkpoint(
+                checkpoint_path,
+                self.device,
+                batch_size=self.batch_size,
+                os_orientation_mode=self.os_orientation_mode,
+                disc_cut_config=OpticDiscCutConfig(mode=self.disc_cut_mode),
+            )
         self.metrics_calc = ClinicalMetricsCalculator(
             axial_res_um=AXIAL_RES_UM,
             include_volumetric_metrics=self.include_volumetric_metrics,
@@ -1317,6 +1351,18 @@ def main():
         action="store_true",
         help="Compute CPU-intensive full-volume HD/HD95/ASD after inference.",
     )
+    parser.add_argument(
+        "--model_family",
+        choices=["auto", "2.5d", "3d"],
+        default="auto",
+        help="Model architecture family: 'auto' (detect from checkpoint), '2.5d' (VolumetricRNFLNet), or '3d' (AnisotropicRNFLUNet3D).",
+    )
+    parser.add_argument(
+        "--val_stride",
+        type=int,
+        default=32,
+        help="Sliding-window stride along slow_z and fast_x for 3D model inference (default: 32 for 50%% Hann overlap).",
+    )
     args = parser.parse_args()
 
     val_subjects = resolve_validation_subjects(
@@ -1342,6 +1388,8 @@ def main():
         eye_filter=eye_filter,
         disc_cut_mode=args.disc_cut_mode,
         include_volumetric_metrics=args.enable_volumetric_metrics,
+        model_family=args.model_family,
+        val_stride=args.val_stride,
     )
     pipeline.run()
 
