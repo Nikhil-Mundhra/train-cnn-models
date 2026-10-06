@@ -18,16 +18,20 @@ from pathlib import Path
 # OpenMP guard for macOS
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
+import json
+from pathlib import Path
+
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data import DataLoader, DistributedSampler
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-import json
 from dataset import SolixRNFLDataset, AXIAL_UM
 from model import VolumetricRNFLNet, CanonicalVolumetricRNFLNet
 from augmentations import OCTRobustnessAugmenter
@@ -156,14 +160,29 @@ def validate(model, val_loader, criterion, device, autocast_device="cpu", amp_dt
 
 
 def train(args):
-    device = torch.device(args.device if args.device else ("mps" if torch.backends.mps.is_available() else "cpu"))
+    # Setup Distributed Data Parallel (DDP) if launched via torchrun / SLURM
+    is_distributed = int(os.environ.get("WORLD_SIZE", "1")) > 1
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    rank = int(os.environ.get("RANK", "0"))
+
+    if is_distributed:
+        if torch.cuda.is_available():
+            torch.cuda.set_device(local_rank)
+            device = torch.device("cuda", local_rank)
+        else:
+            device = torch.device("cpu")
+        dist.init_process_group(backend="nccl" if torch.cuda.is_available() else "gloo")
+    else:
+        device = torch.device(args.device if args.device else ("mps" if torch.backends.mps.is_available() else "cpu"))
+
     autocast_device = "mps" if device.type == "mps" else ("cuda" if device.type == "cuda" else "cpu")
     use_amp = args.precision in ["bf16", "fp16"]
     amp_dtype = torch.bfloat16 if args.precision == "bf16" else (torch.float16 if args.precision == "fp16" else torch.float32)
 
-    print(f"[Training] Using compute device: {device} | Precision: {args.precision.upper()} (AMP: {use_amp}, dtype: {amp_dtype})")
+    if rank == 0:
+        print(f"[Training] Using compute device: {device} (Distributed: {is_distributed}, World Size: {dist.get_world_size() if is_distributed else 1}) | Precision: {args.precision.upper()} (AMP: {use_amp}, dtype: {amp_dtype})")
+        os.makedirs(args.checkpoint_dir, exist_ok=True)
 
-    os.makedirs(args.checkpoint_dir, exist_ok=True)
 
     # 1. Subject-level Dataset Partitioning
     import glob
@@ -204,10 +223,11 @@ def train(args):
     leakage = set(train_subjects) & set(val_subjects)
     assert not leakage, f"FATAL DATA LEAKAGE: Subject(s) {leakage} appear in both train and validation sets!"
 
-    print(f"[Training] Protocol: {args.protocol} | Augmentation: {args.augment} | Laterality Emb: {args.use_laterality_embedding}")
-    print(f"[Training] Total Cohort Pool: {len(all_subjects)} subjects with valid {args.protocol} scans")
-    print(f"[Training] Training Subjects ({len(train_subjects)}): {train_subjects}")
-    print(f"[Training] Validation Subjects ({len(val_subjects)}): {val_subjects}")
+    if rank == 0:
+        print(f"[Training] Protocol: {args.protocol} | Augmentation: {args.augment} | Laterality Emb: {args.use_laterality_embedding}")
+        print(f"[Training] Total Cohort Pool: {len(all_subjects)} subjects with valid {args.protocol} scans")
+        print(f"[Training] Training Subjects ({len(train_subjects)}): {train_subjects}")
+        print(f"[Training] Validation Subjects ({len(val_subjects)}): {val_subjects}")
 
     train_ds = SolixRNFLDataset(
         dataset_root=args.dataset_root,
@@ -226,10 +246,12 @@ def train(args):
         augment=False
     )
 
+    train_sampler = DistributedSampler(train_ds, shuffle=True) if is_distributed else None
     train_loader = DataLoader(
         train_ds,
         batch_size=args.batch_size,
-        shuffle=True,
+        shuffle=(train_sampler is None),
+        sampler=train_sampler,
         num_workers=args.num_workers,
         pin_memory=(device.type == "cuda"),
         persistent_workers=(args.num_workers > 0),
@@ -244,6 +266,7 @@ def train(args):
         persistent_workers=(args.num_workers > 0),
         prefetch_factor=2 if args.num_workers > 0 else None,
     )
+
 
     # 2. Instantiate Model, Loss, Optimizer
     if args.channels:
@@ -307,35 +330,49 @@ def train(args):
     training_start_time = time.time()
 
     if args.resume_checkpoint and os.path.isfile(args.resume_checkpoint):
-        print(f"[Training] Initializing weights from checkpoint: {args.resume_checkpoint}")
+        if rank == 0:
+            print(f"[Training] Initializing weights from checkpoint: {args.resume_checkpoint}")
+
         ckpt = torch.load(args.resume_checkpoint, map_location=device, weights_only=False)
         state_dict = ckpt.get('model_state_dict', ckpt)
         if getattr(args, 'use_stn', False) and not any(k.startswith('backbone_net.') for k in state_dict):
             # Checkpoint from baseline model without STN: map keys to backbone_net
             adapted_dict = {f"backbone_net.{k}": v for k, v in state_dict.items()}
             missing, unexpected = model.load_state_dict(adapted_dict, strict=False)
-            print(f"[Training] Loaded baseline weights into CanonicalVolumetricRNFLNet backbone. STN initialized to identity.")
+            if rank == 0:
+                print(f"[Training] Loaded baseline weights into CanonicalVolumetricRNFLNet backbone. STN initialized to identity.")
+
         elif not getattr(args, 'use_stn', False) and any(k.startswith('backbone_net.') for k in state_dict):
             # Checkpoint from STN model into standard baseline: strip backbone_net. prefix
             adapted_dict = {k.replace('backbone_net.', ''): v for k, v in state_dict.items() if not k.startswith('stn.')}
             missing, unexpected = model.load_state_dict(adapted_dict, strict=False)
-            print(f"[Training] Loaded STN backbone weights into VolumetricRNFLNet.")
+            if rank == 0:
+                print(f"[Training] Loaded STN backbone weights into VolumetricRNFLNet.")
         else:
             model.load_state_dict(state_dict)
 
-        if 'val_metrics' in ckpt and 'peri_nfl_mabe' in ckpt['val_metrics']:
+        if rank == 0 and 'val_metrics' in ckpt and 'peri_nfl_mabe' in ckpt['val_metrics']:
             baseline_mabe = ckpt['val_metrics']['peri_nfl_mabe']
             print(f"[Training] Baseline peripapillary NFL MABE from checkpoint: {baseline_mabe:.2f} um")
 
+    # Wrap model with DistributedDataParallel if running multi-GPU
+    raw_model = model
+    if is_distributed:
+        model = DDP(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
 
-    print("\n==========================================================================================")
-    print("=== STARTING VOLUMETRIC RNFL MODEL TRAINING                                           ===")
-    print("==========================================================================================")
+    if rank == 0:
+        print("\n==========================================================================================")
+        print("=== STARTING VOLUMETRIC RNFL MODEL TRAINING                                           ===")
+        print("==========================================================================================")
+
 
     for epoch in range(1, args.epochs + 1):
+        if is_distributed and train_sampler is not None:
+            train_sampler.set_epoch(epoch)
         model.train()
         epoch_loss = 0.0
         t0 = time.time()
+
 
         optimizer.zero_grad()
         for step, batch in enumerate(train_loader):
@@ -389,9 +426,10 @@ def train(args):
 
             epoch_loss += loss_dict['loss'].item()
 
-            if (step + 1) % args.log_interval == 0:
+            if rank == 0 and (step + 1) % args.log_interval == 0:
                 step_elapsed = time.time() - t0
-                speed = ((step + 1) * args.batch_size) / step_elapsed
+                world_sz = dist.get_world_size() if is_distributed else 1
+                speed = ((step + 1) * args.batch_size * world_sz) / step_elapsed
                 edge_val = loss_dict.get('loss_edge', torch.tensor(0.0)).item()
                 overlap_val = loss_dict.get('loss_overlap', loss_dict.get('loss_dice', torch.tensor(0.0))).item()
                 thick_val = loss_dict.get('loss_thick', torch.tensor(0.0)).item()
@@ -407,9 +445,10 @@ def train(args):
         train_loss = epoch_loss / len(train_loader)
         train_time = time.time() - t0
 
-        # Run Validation
+        # Run Validation (evaluated on rank 0 or all ranks)
         t_val_start = time.time()
-        val_metrics = validate(model, val_loader, criterion, device, autocast_device, amp_dtype, use_amp)
+        eval_model = model.module if is_distributed else model
+        val_metrics = validate(eval_model, val_loader, criterion, device, autocast_device, amp_dtype, use_amp)
         val_time = time.time() - t_val_start
 
         epoch_total_time = time.time() - t0
@@ -417,41 +456,44 @@ def train(args):
         avg_epoch_time = total_elapsed / epoch
         remaining_eta = avg_epoch_time * (args.epochs - epoch)
 
-        print("------------------------------------------------------------------------------------------", flush=True)
-        print(
-            f"Epoch [{epoch}/{args.epochs}] Total Time: {epoch_total_time:.1f}s (Train: {train_time:.1f}s, Val: {val_time:.1f}s) | "
-            f"Train Loss: {train_loss:.2f} | Val Loss: {val_metrics['loss']:.2f} | "
-            f"Val Dice: {val_metrics['dice']:.4f} | "
-            f"Val Peri NFL MABE: {val_metrics['peri_nfl_mabe']:.2f} um (OD: {val_metrics['peri_od_mabe']:.2f} um, OS: {val_metrics['peri_os_mabe']:.2f} um) | "
-            f"Val Peri NFL P95: {val_metrics['peri_nfl_p95']:.2f} um",
-            flush=True
-        )
-        print(
-            f"[Telemetry] Throughput: {len(train_ds)/train_time:.1f} train slices/s | "
-            f"Cumulative Elapsed: {total_elapsed/60:.1f}m | Remaining ETA: {remaining_eta/60:.1f}m",
-            flush=True
-        )
-        print("------------------------------------------------------------------------------------------", flush=True)
+        if rank == 0:
+            print("------------------------------------------------------------------------------------------", flush=True)
+            print(
+                f"Epoch [{epoch}/{args.epochs}] Total Time: {epoch_total_time:.1f}s (Train: {train_time:.1f}s, Val: {val_time:.1f}s) | "
+                f"Train Loss: {train_loss:.2f} | Val Loss: {val_metrics['loss']:.2f} | "
+                f"Val Dice: {val_metrics['dice']:.4f} | "
+                f"Val Peri NFL MABE: {val_metrics['peri_nfl_mabe']:.2f} um (OD: {val_metrics['peri_od_mabe']:.2f} um, OS: {val_metrics['peri_os_mabe']:.2f} um) | "
+                f"Val Peri NFL P95: {val_metrics['peri_nfl_p95']:.2f} um",
+                flush=True
+            )
+            print(
+                f"[Telemetry] Throughput: {len(train_ds)/train_time:.1f} train slices/s | "
+                f"Cumulative Elapsed: {total_elapsed/60:.1f}m | Remaining ETA: {remaining_eta/60:.1f}m",
+                flush=True
+            )
+            print("------------------------------------------------------------------------------------------", flush=True)
 
-        # Always save latest checkpoint
-        latest_checkpoint_path = os.path.join(args.checkpoint_dir, "latest_volumetric_rnfl_net.pt")
-        ckpt_data = {
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'val_metrics': val_metrics,
-            'args': vars(args)
-        }
-        torch.save(ckpt_data, latest_checkpoint_path)
+            # Always save latest checkpoint without DDP module prefix
+            latest_checkpoint_path = os.path.join(args.checkpoint_dir, "latest_volumetric_rnfl_net.pt")
+            saved_state_dict = eval_model.state_dict()
+            ckpt_data = {
+                'epoch': epoch,
+                'model_state_dict': saved_state_dict,
+                'optimizer_state_dict': optimizer.state_dict(),
+                'val_metrics': val_metrics,
+                'args': vars(args)
+            }
+            torch.save(ckpt_data, latest_checkpoint_path)
 
-        # Save Best Checkpoint: balanced score guarding against thin mask collapse
-        # Penalizes if Dice drops below 0.75 while optimizing peripapillary MABE
-        score = val_metrics['peri_nfl_mabe'] + 50.0 * max(0.0, 0.75 - val_metrics['dice'])
-        if score < best_score:
-            best_score = score
-            best_peri_mabe = val_metrics['peri_nfl_mabe']
-            torch.save(ckpt_data, best_checkpoint_path)
-            print(f"[Checkpoint] New best balanced model (Score: {score:.2f} | Peri NFL MABE: {best_peri_mabe:.2f} um [OD: {val_metrics['peri_od_mabe']:.2f}, OS: {val_metrics['peri_os_mabe']:.2f}] | Dice: {val_metrics['dice']:.4f}) saved to {best_checkpoint_path}\n", flush=True)
+            # Save Best Checkpoint: balanced score guarding against thin mask collapse
+            # Penalizes if Dice drops below 0.75 while optimizing peripapillary MABE
+            score = val_metrics['peri_nfl_mabe'] + 50.0 * max(0.0, 0.75 - val_metrics['dice'])
+            if score < best_score:
+                best_score = score
+                best_peri_mabe = val_metrics['peri_nfl_mabe']
+                torch.save(ckpt_data, best_checkpoint_path)
+                print(f"[Checkpoint] New best balanced model (Score: {score:.2f} | Peri NFL MABE: {best_peri_mabe:.2f} um [OD: {val_metrics['peri_od_mabe']:.2f}, OS: {val_metrics['peri_os_mabe']:.2f}] | Dice: {val_metrics['dice']:.4f}) saved to {best_checkpoint_path}\n", flush=True)
+
 
     print("\n==========================================================================================")
     print(f"=== TRAINING COMPLETE. Best Peripapillary NFL MABE: {best_peri_mabe:.2f} um ===")
