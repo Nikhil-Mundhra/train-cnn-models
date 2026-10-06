@@ -17,6 +17,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from monai.networks.nets import UNet
 
+try:
+    from canonicalizer import ConstrainedSpatialTransformer, invert_dense_mask
+except ImportError:
+    from .canonicalizer import ConstrainedSpatialTransformer, invert_dense_mask
+
+
 
 class BoundaryRegressionHead(nn.Module):
     """
@@ -136,3 +142,74 @@ class VolumetricRNFLNet(nn.Module):
             'cup_logits': cup_logits,
             'column_thickness': column_thickness
         }
+
+
+class CanonicalVolumetricRNFLNet(nn.Module):
+    """
+    Volumetric RNFL Network equipped with a Constrained Spatial Transformer (STN).
+    
+    1. Canonicalizes the input slice to a flat horizontal coordinate frame via
+       the ConstrainedSpatialTransformer.
+    2. Executes the multi-task U-Net backbone and continuous 1D boundary regression
+       in the canonical coordinate frame.
+    3. Inverts the spatial transformation for dense voxel masks back to native scan space.
+    """
+    def __init__(
+        self,
+        in_channels=5,
+        base_channels=16,
+        channels=(16, 32, 64, 128, 256),
+        strides=(2, 2, 2, 2),
+        num_res_units=2,
+        axial_height=768,
+        width=320,
+        use_laterality_embedding=False,
+        max_angle_deg=25.0,
+    ):
+        super().__init__()
+        self.axial_height = axial_height
+        self.width = width
+        self.use_laterality_embedding = use_laterality_embedding
+        self.stn = ConstrainedSpatialTransformer(
+            in_channels=in_channels,
+            max_angle_deg=max_angle_deg,
+            max_shift_y_ratio=0.20,
+            axial_height=axial_height,
+            width=width
+        )
+        self.backbone_net = VolumetricRNFLNet(
+            in_channels=in_channels,
+            base_channels=base_channels,
+            channels=channels,
+            strides=strides,
+            num_res_units=num_res_units,
+            axial_height=axial_height,
+            width=width,
+            use_laterality_embedding=use_laterality_embedding
+        )
+
+    def forward(self, x, eye_idx=None, override_theta_deg=None):
+        """
+        x: (B, context_slices, H, W)
+        eye_idx: (B,) long tensor (0=OD, 1=OS), optional
+        override_theta_deg: Optional manual rotation angle override for ablation/stress testing
+        """
+        # 1. Canonicalize input orientation
+        x_canonical, mat_fwd, mat_inv, theta_deg = self.stn(x, override_theta_deg=override_theta_deg)
+
+        # 2. Forward pass through backbone in canonical orientation
+        preds = self.backbone_net(x_canonical, eye_idx=eye_idx)
+
+        # 3. Inverse warp dense mask logits back to native coordinates
+        native_mask_logits = invert_dense_mask(preds['mask_logits'], mat_inv)
+
+        preds['native_mask_logits'] = native_mask_logits
+        preds['canonical_mask_logits'] = preds['mask_logits']
+        # Set primary mask_logits to native for standard loss computation against native ground truth
+        preds['mask_logits'] = native_mask_logits
+        preds['predicted_tilt_deg'] = theta_deg
+        preds['mat_fwd'] = mat_fwd
+        preds['mat_inv'] = mat_inv
+
+        return preds
+
