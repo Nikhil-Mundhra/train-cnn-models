@@ -6,18 +6,19 @@
 #   - Trains for 10 epochs exclusively on 10 human-audited training subjects
 #   - Reduced learning rate (lr = 2e-5) to preserve global morphology
 #   - Strict Zero-Leakage Guarantee: held-out validation cohort isolated
-# Partition: nvidia (NVIDIA A100 GPU, 40GB VRAM)
+# Partition: nvidia (NVIDIA H200 GPU, 141GB HBM3e VRAM)
 # ==============================================================================
 
 #SBATCH -p nvidia                      # Request GPU partition (nvidia)
-#SBATCH --gres=gpu:a100:1              # Request 1 NVIDIA A100 GPU (40 GB VRAM)
+#SBATCH --gres=gpu:h200:1              # Request 1 NVIDIA H200 GPU (141 GB HBM3e VRAM)
 #SBATCH -n 1                           # 1 task
-#SBATCH -c 8                           # 8 CPU cores for data loading
-#SBATCH --mem=32G                      # 32 GB system memory
-#SBATCH -t 02:30:00                    # Wall clock time limit (2.5 hours sufficient for 10 epochs)
+#SBATCH -c 16                          # 16 CPU cores for high-throughput data loading
+#SBATCH --mem=64G                      # 64 GB system memory
+#SBATCH -t 01:15:00                    # Wall clock time limit (1 hour 15 min sufficient on H200)
 #SBATCH -J rnfl_finetune_canonical     # Job name
 #SBATCH -o slurm_rnfl_finetune_canonical_%j.out  # Standard output log (%j expands to jobID)
 #SBATCH -e slurm_rnfl_finetune_canonical_%j.err  # Standard error log
+
 
 set -e
 
@@ -95,12 +96,12 @@ echo "Val Subjects:      ${VAL_SUBJECTS}"
     --val_subjects "${VAL_SUBJECTS}" \
     --epochs 10 \
     --base_channels 32 \
-    --batch_size 32 \
-    --accum_steps 2 \
+    --batch_size 64 \
+    --accum_steps 1 \
     --lr 2e-5 \
     --weight_decay 1e-4 \
     --context_slices 5 \
-    --num_workers 6 \
+    --num_workers 12 \
     --precision "bf16" \
     --enable_orthogonal \
     --use_stn \
@@ -127,8 +128,9 @@ echo "##################################################################"
     --val_subjects "${VAL_SUBJECTS}" \
     --os_orientation_mode "corrected" \
     --disc_cut_mode "cup" \
-    --batch_size 8 \
+    --batch_size 16 \
     --device "cuda"
+
 
 echo "[Step 2 SUCCESS] Fine-Tuned Evaluation completed."
 

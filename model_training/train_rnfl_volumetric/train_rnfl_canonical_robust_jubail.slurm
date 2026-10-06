@@ -7,18 +7,19 @@
 #   - Orthogonal Bi-Planar Slicing (Horizontal + Vertical)
 #   - Focal Tversky Loss + ReLayNet Boundary Weighting + Column-Thickness Consistency
 #   - End-to-End High-Throughput Fusion Evaluation across all 46 Solix volumes
-# Partition: nvidia (NVIDIA A100 GPU, 40GB VRAM)
+# Partition: nvidia (NVIDIA H200 GPU, 141GB HBM3e VRAM)
 # ==============================================================================
 
 #SBATCH -p nvidia                      # Request GPU partition (nvidia)
-#SBATCH --gres=gpu:a100:1              # Request 1 NVIDIA A100 GPU (40 GB VRAM)
+#SBATCH --gres=gpu:h200:1              # Request 1 NVIDIA H200 GPU (141 GB HBM3e VRAM)
 #SBATCH -n 1                           # 1 task
-#SBATCH -c 8                           # 8 CPU cores for data loading
-#SBATCH --mem=48G                      # 48 GB system memory
-#SBATCH -t 12:00:00                    # Wall clock time limit (12 hours)
+#SBATCH -c 16                          # 16 CPU cores for high-throughput data loading
+#SBATCH --mem=64G                      # 64 GB system memory
+#SBATCH -t 04:30:00                    # Wall clock time limit (4.5 hours sufficient on H200)
 #SBATCH -J rnfl_canonical_robust       # Job name
 #SBATCH -o slurm_rnfl_canonical_robust_%j.out  # Standard output log (%j expands to jobID)
 #SBATCH -e slurm_rnfl_canonical_robust_%j.err  # Standard error log
+
 
 set -e
 
@@ -86,12 +87,12 @@ echo "##################################################################"
     --train_manifest "${TRAIN_MANIFEST}" \
     --epochs 20 \
     --base_channels 32 \
-    --batch_size 32 \
-    --accum_steps 2 \
+    --batch_size 64 \
+    --accum_steps 1 \
     --lr 5e-4 \
     --weight_decay 1e-4 \
     --context_slices 5 \
-    --num_workers 8 \
+    --num_workers 12 \
     --precision "bf16" \
     --enable_orthogonal \
     --use_stn \
@@ -117,8 +118,9 @@ echo "##################################################################"
     --output_dir "${REPORT_DIR}" \
     --split_manifest "${SPLIT_MANIFEST}" \
     --os_orientation_mode "corrected" \
-    --batch_size 8 \
+    --batch_size 16 \
     --device "cuda"
+
 
 echo "[Step 2 SUCCESS] Bi-Planar Evaluation finished across cohort volumes."
 
