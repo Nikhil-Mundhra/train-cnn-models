@@ -33,7 +33,7 @@ if str(TRAIN_3D_DIR) not in sys.path:
     sys.path.insert(0, str(TRAIN_3D_DIR))
 
 from dataset import find_dicom_pixel_offset, load_curves, find_matching_curve_xml
-from model import VolumetricRNFLNet
+from model import VolumetricRNFLNet, CanonicalVolumetricRNFLNet
 from orientation import (
     OS_ORIENTATION_MODES,
     horizontal_requires_flip,
@@ -366,15 +366,26 @@ class VolumetricRNFLPredictor:
         if not use_laterality_embedding:
             use_laterality_embedding = 'eye_emb.weight' in state_dict
 
-        model = VolumetricRNFLNet(
-            in_channels=5,
-            base_channels=base_channels,
-            channels=channels,
-            num_res_units=num_res_units,
-            use_laterality_embedding=use_laterality_embedding,
-        ).to(device)
+        use_stn = ckpt_args.get('use_stn', False) or any(k.startswith('stn.') for k in state_dict)
+        if use_stn:
+            model = CanonicalVolumetricRNFLNet(
+                in_channels=5,
+                base_channels=base_channels,
+                channels=channels,
+                num_res_units=num_res_units,
+                use_laterality_embedding=use_laterality_embedding,
+            ).to(device)
+        else:
+            model = VolumetricRNFLNet(
+                in_channels=5,
+                base_channels=base_channels,
+                channels=channels,
+                num_res_units=num_res_units,
+                use_laterality_embedding=use_laterality_embedding,
+            ).to(device)
         model.load_state_dict(state_dict)
         model.eval()
+
         return cls(
             model=model,
             device=device,

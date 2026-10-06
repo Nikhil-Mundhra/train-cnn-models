@@ -29,7 +29,9 @@ if str(SCRIPT_DIR) not in sys.path:
 
 import json
 from dataset import SolixRNFLDataset, AXIAL_UM
-from model import VolumetricRNFLNet
+from model import VolumetricRNFLNet, CanonicalVolumetricRNFLNet
+from augmentations import OCTRobustnessAugmenter
+
 from losses import VolumetricRNFLLoss
 from evaluation_manifest import evaluation_subjects
 
@@ -250,15 +252,27 @@ def train(args):
         b = args.base_channels
         model_channels = (b, b * 2, b * 4, b * 8, b * 16)
 
-    print(f"[Architecture] Initializing VolumetricRNFLNet (base_channels={args.base_channels}, channels={model_channels}, res_units={args.num_res_units}, laterality_emb={args.use_laterality_embedding})...")
-    model = VolumetricRNFLNet(
-        in_channels=args.context_slices,
-        base_channels=args.base_channels,
-        channels=model_channels,
-        strides=(2, 2, 2, 2),
-        num_res_units=args.num_res_units,
-        use_laterality_embedding=args.use_laterality_embedding
-    ).to(device)
+    if getattr(args, 'use_stn', False):
+        print(f"[Architecture] Initializing CanonicalVolumetricRNFLNet with STN (base_channels={args.base_channels}, channels={model_channels}, res_units={args.num_res_units}, laterality_emb={args.use_laterality_embedding})...")
+        model = CanonicalVolumetricRNFLNet(
+            in_channels=args.context_slices,
+            base_channels=args.base_channels,
+            channels=model_channels,
+            strides=(2, 2, 2, 2),
+            num_res_units=args.num_res_units,
+            use_laterality_embedding=args.use_laterality_embedding
+        ).to(device)
+    else:
+        print(f"[Architecture] Initializing VolumetricRNFLNet (base_channels={args.base_channels}, channels={model_channels}, res_units={args.num_res_units}, laterality_emb={args.use_laterality_embedding})...")
+        model = VolumetricRNFLNet(
+            in_channels=args.context_slices,
+            base_channels=args.base_channels,
+            channels=model_channels,
+            strides=(2, 2, 2, 2),
+            num_res_units=args.num_res_units,
+            use_laterality_embedding=args.use_laterality_embedding
+        ).to(device)
+
 
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"[Architecture] Trainable Parameters: {total_params:,}")
@@ -314,7 +328,9 @@ def train(args):
             for k in ['image', 'mask', 'ilm_surface', 'nfl_surface', 'cup_absent', 'is_peripapillary']:
                 batch[k] = batch[k].to(device, non_blocking=(device.type == "cuda"))
 
-            if args.augment:
+            if getattr(args, 'robust_augment', False):
+                batch = OCTRobustnessAugmenter().to(device)(batch)
+            elif args.augment:
                 # Fast GPU Vectorized Augmentations (< 0.2ms total for batch of 32 on A100)
                 B = batch['image'].shape[0]
                 scales = torch.empty(B, 1, 1, 1, device=device).uniform_(0.85, 1.15)
@@ -337,6 +353,10 @@ def train(args):
                     preds = model(batch['image'])
                 loss_dict = criterion(preds, batch)
                 loss = loss_dict['loss'] / args.accum_steps
+                if 'predicted_tilt_deg' in preds:
+                    # Mild L2 regularization to anchor STN when scan is naturally horizontal
+                    loss = loss + (1e-4 * (preds['predicted_tilt_deg'] ** 2).mean()) / args.accum_steps
+
 
             if args.precision == "fp16":
                 scaler.scale(loss).backward()
@@ -451,9 +471,12 @@ if __name__ == "__main__":
     parser.add_argument("--disable_orthogonal", dest="enable_orthogonal", action="store_false", help="Disable orthogonal bi-planar training")
     parser.add_argument("--augment", action="store_true", default=True, help="Enable training data augmentations (speckle, contrast, depth jitter)")
     parser.add_argument("--no_augment", dest="augment", action="store_false", help="Disable training data augmentations")
+    parser.add_argument("--use_stn", action="store_true", default=False, help="Enable ConstrainedSpatialTransformer STN canonicalizer")
+    parser.add_argument("--robust_augment", action="store_true", default=False, help="Enable physics-informed OCT robustness augmentations (speckle, shadows, roll-off, dropout)")
     parser.add_argument("--use_laterality_embedding", action="store_true", default=False, help="Enable explicit OD/OS conditioning embedding")
     parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints/train_rnfl_volumetric")
     parser.add_argument("--log_interval", type=int, default=100)
     args = parser.parse_args()
+
 
     train(args)
