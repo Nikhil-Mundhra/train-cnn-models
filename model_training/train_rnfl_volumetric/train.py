@@ -309,10 +309,24 @@ def train(args):
     if args.resume_checkpoint and os.path.isfile(args.resume_checkpoint):
         print(f"[Training] Initializing weights from checkpoint: {args.resume_checkpoint}")
         ckpt = torch.load(args.resume_checkpoint, map_location=device, weights_only=False)
-        model.load_state_dict(ckpt['model_state_dict'])
+        state_dict = ckpt.get('model_state_dict', ckpt)
+        if getattr(args, 'use_stn', False) and not any(k.startswith('backbone_net.') for k in state_dict):
+            # Checkpoint from baseline model without STN: map keys to backbone_net
+            adapted_dict = {f"backbone_net.{k}": v for k, v in state_dict.items()}
+            missing, unexpected = model.load_state_dict(adapted_dict, strict=False)
+            print(f"[Training] Loaded baseline weights into CanonicalVolumetricRNFLNet backbone. STN initialized to identity.")
+        elif not getattr(args, 'use_stn', False) and any(k.startswith('backbone_net.') for k in state_dict):
+            # Checkpoint from STN model into standard baseline: strip backbone_net. prefix
+            adapted_dict = {k.replace('backbone_net.', ''): v for k, v in state_dict.items() if not k.startswith('stn.')}
+            missing, unexpected = model.load_state_dict(adapted_dict, strict=False)
+            print(f"[Training] Loaded STN backbone weights into VolumetricRNFLNet.")
+        else:
+            model.load_state_dict(state_dict)
+
         if 'val_metrics' in ckpt and 'peri_nfl_mabe' in ckpt['val_metrics']:
             baseline_mabe = ckpt['val_metrics']['peri_nfl_mabe']
             print(f"[Training] Baseline peripapillary NFL MABE from checkpoint: {baseline_mabe:.2f} um")
+
 
     print("\n==========================================================================================")
     print("=== STARTING VOLUMETRIC RNFL MODEL TRAINING                                           ===")
