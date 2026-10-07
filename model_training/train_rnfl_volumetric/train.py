@@ -33,7 +33,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from dataset import SolixRNFLDataset, AXIAL_UM
-from model import VolumetricRNFLNet, CanonicalVolumetricRNFLNet
+from model import VolumetricRNFLNet, CanonicalVolumetricRNFLNet, TransUNetRNFLNet
 from augmentations import OCTRobustnessAugmenter
 
 from losses import VolumetricRNFLLoss
@@ -275,7 +275,18 @@ def train(args):
         b = args.base_channels
         model_channels = (b, b * 2, b * 4, b * 8, b * 16)
 
-    if getattr(args, 'use_stn', False):
+    if getattr(args, 'arch', 'unet') == 'transunet':
+        print(f"[Architecture] Initializing TransUNetRNFLNet (base_channels={args.base_channels}, hidden_size={args.transunet_hidden_size}, layers={args.transunet_layers}, heads={args.transunet_heads}, laterality_emb={args.use_laterality_embedding})...")
+        model = TransUNetRNFLNet(
+            in_channels=args.context_slices,
+            base_channels=args.base_channels,
+            hidden_size=args.transunet_hidden_size,
+            num_layers=args.transunet_layers,
+            num_heads=args.transunet_heads,
+            mlp_dim=args.transunet_mlp_dim,
+            use_laterality_embedding=args.use_laterality_embedding,
+        ).to(device)
+    elif getattr(args, 'use_stn', False):
         print(f"[Architecture] Initializing CanonicalVolumetricRNFLNet with STN (base_channels={args.base_channels}, channels={model_channels}, res_units={args.num_res_units}, laterality_emb={args.use_laterality_embedding})...")
         model = CanonicalVolumetricRNFLNet(
             in_channels=args.context_slices,
@@ -530,6 +541,12 @@ if __name__ == "__main__":
     parser.add_argument("--use_stn", action="store_true", default=False, help="Enable ConstrainedSpatialTransformer STN canonicalizer")
     parser.add_argument("--robust_augment", action="store_true", default=False, help="Enable physics-informed OCT robustness augmentations (speckle, shadows, roll-off, dropout)")
     parser.add_argument("--use_laterality_embedding", action="store_true", default=False, help="Enable explicit OD/OS conditioning embedding")
+    parser.add_argument("--arch", type=str, default="unet", choices=["unet", "transunet"],
+                        help="Network architecture: 'unet' (standard VolumetricRNFLNet) or 'transunet' (hybrid CNN-Transformer TransUNetRNFLNet)")
+    parser.add_argument("--transunet_hidden_size", type=int, default=256, help="Transformer embedding dimension for TransUNet")
+    parser.add_argument("--transunet_layers", type=int, default=6, help="Number of Transformer encoder layers for TransUNet")
+    parser.add_argument("--transunet_heads", type=int, default=8, help="Number of attention heads for TransUNet")
+    parser.add_argument("--transunet_mlp_dim", type=int, default=512, help="Feedforward MLP dimension for TransUNet")
     parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints/train_rnfl_volumetric")
     parser.add_argument("--log_interval", type=int, default=100)
     args = parser.parse_args()

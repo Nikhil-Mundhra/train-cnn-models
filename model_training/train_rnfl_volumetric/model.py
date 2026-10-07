@@ -24,6 +24,7 @@ except ImportError:
 
 
 
+
 class BoundaryRegressionHead(nn.Module):
     """
     1D Convolutional Head branching from bottleneck features to directly
@@ -212,4 +213,13 @@ class CanonicalVolumetricRNFLNet(nn.Module):
         preds['mat_inv'] = mat_inv
 
         return preds
+
+
+try:
+    from transunet import TransUNetRNFLNet
+except ImportError:
+    try:
+        from .transunet import TransUNetRNFLNet
+    except ImportError:
+        pass
 

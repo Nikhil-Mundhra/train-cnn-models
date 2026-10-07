@@ -372,8 +372,24 @@ class VolumetricRNFLPredictor:
         if not use_laterality_embedding:
             use_laterality_embedding = 'eye_emb.weight' in state_dict
 
+        is_transunet = ckpt_args.get('arch') == 'transunet' or any(k.startswith('encoder.transformer.') for k in state_dict)
         use_stn = ckpt_args.get('use_stn', False) or any(k.startswith('stn.') for k in state_dict)
-        if use_stn:
+        if is_transunet:
+            from transunet import TransUNetRNFLNet
+            hidden_size = ckpt_args.get('transunet_hidden_size', 256)
+            num_layers = ckpt_args.get('transunet_layers', 6)
+            num_heads = ckpt_args.get('transunet_heads', 8)
+            mlp_dim = ckpt_args.get('transunet_mlp_dim', 512)
+            model = TransUNetRNFLNet(
+                in_channels=5,
+                base_channels=base_channels,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                num_heads=num_heads,
+                mlp_dim=mlp_dim,
+                use_laterality_embedding=use_laterality_embedding,
+            ).to(device)
+        elif use_stn:
             model = CanonicalVolumetricRNFLNet(
                 in_channels=5,
                 base_channels=base_channels,
