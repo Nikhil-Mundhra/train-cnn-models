@@ -49,6 +49,12 @@ from audit_analysis import (
 )
 from spatial import AXIAL_UM, FAST_UM, SLOW_UM
 from evaluation_metrics import compute_volumetric_metrics
+from thickness_maps import (
+    compute_paired_thickness_errors,
+    render_signed_error_map,
+    shared_color_limit,
+    summarize_signed_error,
+)
 
 AXIAL_RES_UM: float = AXIAL_UM
 
@@ -1129,7 +1135,7 @@ class CohortEvaluatorPipeline:
         self,
         vol: OCTVolume,
         seen_gallery_subjects: List[str]
-    ) -> Tuple[ScanEvaluationResult, Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    ) -> Tuple[ScanEvaluationResult, Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
         """Evaluates a single OCT volume and creates gallery/deep-dive entries if applicable."""
         print(f"\n---> Evaluating {vol.subject} ({vol.eye}) [{vol.cohort_tag}]...")
 
@@ -1148,7 +1154,35 @@ class CohortEvaluatorPipeline:
         if result.bad_dice is not None:
             print(f"[{vol.subject} {vol.eye}] Bad   Dice: {result.bad_dice:.4f} | MABE: {result.bad_mabe:.2f} µm | P95: {result.bad_p95:.2f} µm | Cup IoU: {result.bad_cup_iou:.4f}")
 
-        # 3. Visuals for OD acquisitions or unseen subjects
+        # 3. Preserve the full-grid numeric comparison before rendering larger panels.
+        thickness_entry = None
+        if vol.is_validation and not result.is_mirror:
+            good, commercial = vol.curves_good, vol.curves_bad
+            if good is not None and commercial is not None:
+                unet_error, commercial_error, valid, reference_columns = compute_paired_thickness_errors(
+                    good, commercial, prediction, AXIAL_RES_UM
+                )
+                array_filename = f"thickness_error_{vol.subject}_{vol.eye}.npz"
+                np.savez_compressed(
+                    Path(self.assets_dir) / array_filename,
+                    unet_error_um=unet_error,
+                    commercial_error_um=commercial_error,
+                    valid_mask=valid,
+                )
+                thickness_entry = {
+                    'subject': vol.subject,
+                    'eye': vol.eye,
+                    'cohort': vol.cohort_tag,
+                    'array_filename': array_filename,
+                    'valid_columns': int(valid.sum()),
+                    'reference_valid_columns': reference_columns,
+                    'coverage_percent': float(100 * valid.mean()),
+                    'audit_edited_columns': result.audit_edited_columns,
+                    'unet': summarize_signed_error(unet_error),
+                    'commercial': summarize_signed_error(commercial_error),
+                }
+
+        # 4. Visuals for OD acquisitions or unseen subjects
         gallery_entry = None
         deep_dive_entry = None
         if vol.eye == "OD" or vol.subject not in seen_gallery_subjects:
@@ -1171,13 +1205,14 @@ class CohortEvaluatorPipeline:
                     'filename': dd_file
                 }
 
-        return result, gallery_entry, deep_dive_entry
+        return result, gallery_entry, deep_dive_entry, thickness_entry
 
     def _export_reports(
         self,
         cohort_results: List[ScanEvaluationResult],
         gallery_manifest: List[Dict[str, Any]],
-        deep_dive_manifest: List[Dict[str, Any]]
+        deep_dive_manifest: List[Dict[str, Any]],
+        thickness_manifest: List[Dict[str, Any]],
     ) -> str:
         """Renders publication summary charts (dual-theme) and exports JSON metrics manifest."""
         print("\n[Cohort Pipeline] Generating Publication Cohort Summary Charts (Dual-Theme)...")
@@ -1188,6 +1223,26 @@ class CohortEvaluatorPipeline:
             self.visualizer.render_baseline_comparison_chart(cohort_results, theme=theme)
         print("[Cohort Pipeline] Summary charts saved in both dark (.png) and light (_light.png) themes.")
 
+        color_limit_um = None
+        if thickness_manifest:
+            color_limit_um = shared_color_limit(
+                Path(self.assets_dir) / entry['array_filename'] for entry in thickness_manifest
+            )
+            for entry in thickness_manifest:
+                with np.load(Path(self.assets_dir) / entry['array_filename']) as maps:
+                    for key, label in (('unet', 'U-Net'), ('commercial', 'Commercial')):
+                        error = maps[f'{key}_error_um']
+                        filename = f"thickness_error_{entry['subject']}_{entry['eye']}_{key}.png"
+                        render_signed_error_map(
+                            error,
+                            Path(self.assets_dir) / filename,
+                            f"{entry['subject']} {entry['eye']} | {label} − audited reference",
+                            color_limit_um,
+                        )
+                        entry[key]['image_filename'] = filename
+                        entry[key]['saturated_percent'] = float(
+                            100 * np.mean(np.abs(error[np.isfinite(error)]) > color_limit_um)
+                        )
         json_path = os.path.join(self.assets_dir, "cohort_evaluation_metrics.json")
         with open(json_path, "w") as f:
             json.dump({
@@ -1199,10 +1254,12 @@ class CohortEvaluatorPipeline:
                     'qc_threshold_profile': 'Operational engineering defaults; thresholds are not clinically validated.',
                     'audit_edit_threshold_px': AUDIT_EDIT_THRESHOLD_PX,
                     'audit_unchanged_preservation_tolerance_px': PRESERVATION_TOLERANCE_PX,
+                    'thickness_map_color_limit_um': color_limit_um,
                 },
                 'scans': [r.to_dict() for r in cohort_results],
                 'gallery': gallery_manifest,
-                'deep_dives': deep_dive_manifest
+                'deep_dives': deep_dive_manifest,
+                'thickness_maps': thickness_manifest,
             }, f, indent=2)
         print(f"[Cohort Pipeline] Metrics JSON saved to: {json_path}")
 
@@ -1309,17 +1366,20 @@ class CohortEvaluatorPipeline:
         cohort_results: List[ScanEvaluationResult] = []
         gallery_manifest: List[Dict[str, Any]] = []
         deep_dive_manifest: List[Dict[str, Any]] = []
+        thickness_manifest: List[Dict[str, Any]] = []
 
         for vol in volumes:
             seen_subjs = [g['subject'] for g in gallery_manifest]
-            result, g_entry, dd_entry = self._evaluate_single_volume(vol, seen_subjs)
+            result, g_entry, dd_entry, thickness_entry = self._evaluate_single_volume(vol, seen_subjs)
             cohort_results.append(result)
             if g_entry:
                 gallery_manifest.append(g_entry)
             if dd_entry:
                 deep_dive_manifest.append(dd_entry)
+            if thickness_entry:
+                thickness_manifest.append(thickness_entry)
 
-        self._export_reports(cohort_results, gallery_manifest, deep_dive_manifest)
+        self._export_reports(cohort_results, gallery_manifest, deep_dive_manifest, thickness_manifest)
         return cohort_results
 
 

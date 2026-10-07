@@ -175,6 +175,34 @@ class TestMarkdownUtilities(unittest.TestCase):
         self.assertIn("subject-disjoint held-out cohort", md)
         self.assertIn("## 9. Clinical Significance & Conclusion", md)
 
+        metrics_data["metadata"] = {"thickness_map_color_limit_um": 25.0}
+        metrics_data["thickness_maps"] = [{
+            "subject": "BEH0002", "eye": "OS", "valid_columns": 100,
+            "coverage_percent": 83.3,
+            "unet": {"image_filename": "unet.png", "mean_um": -1.0, "std_um": 2.0, "mae_um": 2.2},
+            "commercial": {"image_filename": "commercial.png", "mean_um": 3.0, "std_um": 4.0, "mae_um": 5.0},
+        }]
+        md_with_maps = generate_markdown_report(
+            metrics_data, "assets", "12345", "best_model.pt"
+        )
+        self.assertIn("### 3.4 Full-Cube Signed RNFL Thickness Differences", md_with_maps)
+        self.assertIn("assets/unet.png", md_with_maps)
+        self.assertIn("assets/commercial.png", md_with_maps)
+        self.assertIn("±25 µm", md_with_maps)
+        self.assertNotIn("### 3.4 Full-Cube", md)
+
+        metrics_data["thickness_maps"] = [
+            {
+                **metrics_data["thickness_maps"][0],
+                "subject": f"BEH{i:04d}",
+                "unet": {**metrics_data["thickness_maps"][0]["unet"], "mae_um": float(i)},
+            }
+            for i in range(5)
+        ]
+        md_with_appendix = generate_markdown_report(metrics_data, "assets", "12345", "best_model.pt")
+        self.assertIn("## Appendix A. Remaining Full-Cube Thickness Difference Pairs", md_with_appendix)
+        self.assertEqual(md_with_appendix.count('class="thickness-pair"'), 5)
+
     def test_executive_gallery_is_bounded_and_keeps_failure_coverage(self):
         gallery = [
             {
@@ -460,4 +488,3 @@ class TestDeepDiveAdaptiveLayout(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

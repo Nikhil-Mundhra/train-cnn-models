@@ -14,6 +14,11 @@ import sys
 from typing import Any, Dict, List, Optional
 
 try:
+    from model_training.train_rnfl_volumetric.reporting.training_cohort import summarize_training_cohort
+except ImportError:
+    from reporting.training_cohort import summarize_training_cohort
+
+try:
     from model_training.train_rnfl_volumetric.reporting import (
         get_theme_palette,
         compute_distribution_stats,
@@ -90,6 +95,9 @@ def main():
     parser.add_argument("--checkpoint_name", type=str, default="latest", help="Checkpoint description")
     parser.add_argument("--model_variant", type=str, default="Volumetric", help="Model variant label (e.g. Light, Heavy)")
     parser.add_argument("--model_desc", type=str, default="", help="Detailed architecture description")
+    parser.add_argument("--train_manifest", type=str, default=None, help="Exact training manifest for checkpoint provenance")
+    parser.add_argument("--fine_tune_manifest", type=str, default=None, help="Additional audited fine-tuning manifest, if applied")
+    parser.add_argument("--training_stage", type=str, default="Training", help="Training phase applied to this checkpoint")
     parser.add_argument(
         "--max_gallery_items",
         type=int,
@@ -110,6 +118,23 @@ def main():
 
     with open(args.metrics_json, "r") as f:
         metrics_data = json.load(f)
+
+    training_cohort = None
+    fine_tune_cohort = None
+    if args.train_manifest:
+        with open(args.train_manifest, "r", encoding="utf-8") as f:
+            train_manifest = json.load(f)
+        training_cohort = summarize_training_cohort(train_manifest, metrics_data.get("scans", []))
+    if args.fine_tune_manifest:
+        if not args.train_manifest:
+            raise ValueError("--fine_tune_manifest requires --train_manifest")
+        with open(args.fine_tune_manifest, "r", encoding="utf-8") as f:
+            fine_tune_manifest = json.load(f)
+        fine_tune_cohort = summarize_training_cohort(fine_tune_manifest, metrics_data.get("scans", []))
+        pretrain_subjects = {scan["subject"] for scan in train_manifest["scans"]}
+        fine_tune_subjects = {scan["subject"] for scan in fine_tune_manifest["scans"]}
+        if not fine_tune_subjects <= pretrain_subjects:
+            raise ValueError("Fine-tuning subjects must be contained in the pretraining cohort")
 
     md_dir = os.path.dirname(os.path.abspath(args.output_md))
     assets_abs = os.path.abspath(args.assets_dir)
@@ -167,6 +192,9 @@ def main():
         model_variant=args.model_variant,
         model_desc=args.model_desc,
         max_gallery_items=args.max_gallery_items,
+        training_cohort=training_cohort,
+        fine_tune_cohort=fine_tune_cohort,
+        training_stage=args.training_stage,
     )
 
     os.makedirs(md_dir, exist_ok=True)
@@ -176,7 +204,7 @@ def main():
 
     # Compile PDF if requested
     if args.output_pdf:
-        compile_report_pdf(
+        compiled = compile_report_pdf(
             md_content=md_content,
             md_dir=md_dir,
             title=os.path.basename(args.output_md),
@@ -184,6 +212,8 @@ def main():
             theme="light",
             md_path=args.output_md
         )
+        if not compiled:
+            raise RuntimeError(f"PDF report was not regenerated: {args.output_pdf}")
 
 
 if __name__ == "__main__":

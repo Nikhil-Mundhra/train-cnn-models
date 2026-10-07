@@ -44,17 +44,49 @@ def generate_markdown_report(
     model_variant: str = "Volumetric",
     model_desc: str = "",
     max_gallery_items: int = 24,
+    training_cohort: Dict[str, Any] = None,
+    fine_tune_cohort: Dict[str, Any] = None,
+    training_stage: str = "Training",
 ) -> str:
     scans: List[Dict[str, Any]] = metrics_data.get('scans', [])
     gallery_all: List[Dict[str, Any]] = metrics_data.get('gallery', [])
     gallery: List[Dict[str, Any]] = select_executive_gallery(gallery_all, max_gallery_items)
     deep_dives: List[Dict[str, Any]] = metrics_data.get('deep_dives', [])
+    thickness_maps: List[Dict[str, Any]] = metrics_data.get('thickness_maps', [])
 
     all_subjects = sorted(list(set(s['subject'] for s in scans))) if scans else []
     val_subjects = sorted(list(set(s['subject'] for s in scans if s.get('is_validation', False))))
     n_scans = len(scans)
     n_od = sum(1 for s in scans if s['eye'] == 'OD')
     n_os = sum(1 for s in scans if s['eye'] == 'OS')
+    if training_cohort:
+        training_summary = (
+            f"{training_cohort['subject_count']} subjects / {training_cohort['scan_count']} scans "
+            f"({training_cohort['audited_subject_count']} subjects / {training_cohort['audited_scan_count']} scans "
+            f"with paired human-audited annotations; "
+            f"{training_cohort['accepted_subject_count']} subjects / {training_cohort['accepted_scan_count']} scans "
+            f"accepted as segmented)"
+        )
+        training_methods = (
+            f"- **Checkpoint training ({training_stage})**: {training_summary}. "
+            f"Counts come from `{training_cohort['manifest_name']}`. A paired commercial and accepted curve "
+            "identifies the human-audited tier; it does not establish that every scan was manually changed. "
+            "Training and evaluation subjects are disjoint."
+        )
+        if fine_tune_cohort:
+            fine_tune_summary = (
+                f"{fine_tune_cohort['subject_count']} audited subjects / "
+                f"{fine_tune_cohort['scan_count']} scans"
+            )
+            training_summary = f"Phase 1: {training_summary}; Phase 2: {fine_tune_summary} (subset of Phase 1)"
+            training_methods += (
+                f"\n- **Audited fine-tuning (Phase 2)**: {fine_tune_summary}, from "
+                f"`{fine_tune_cohort['manifest_name']}`. These subjects are included in the Phase 1 count; "
+                "the stage counts must not be added together."
+            )
+    else:
+        training_summary = "not supplied to the report builder"
+        training_methods = "- **Checkpoint training**: Training manifest was not supplied; subject and annotation-tier counts are unavailable."
 
     bench_scans = [s for s in scans if not s.get('is_validation', False)]
     bench_od = [s for s in bench_scans if s['eye'] == 'OD']
@@ -260,6 +292,53 @@ The head-to-head chart below plots boundary error exclusively on human-edited co
     else:
         audit_section_text = f"""Whole-mask comparison is reference-dependent because the human-audited annotation was created by editing the raw commercial result. In this run, no scans contained manual edits exceeding {audit_threshold_px:g} px."""
 
+    thickness_section = ""
+    thickness_appendix = ""
+    if thickness_maps:
+        limit_um = metrics_data['metadata']['thickness_map_color_limit_um']
+        ranked_maps = sorted(thickness_maps, key=lambda entry: (entry['unet']['mae_um'], entry['subject'], entry['eye']))
+        if len(ranked_maps) > 4:
+            positions = {round(i * (len(ranked_maps) - 1) / 3) for i in range(4)}
+            main_maps = [entry for index, entry in enumerate(ranked_maps) if index in positions]
+            appendix_maps = [entry for index, entry in enumerate(ranked_maps) if index not in positions]
+        else:
+            main_maps, appendix_maps = ranked_maps, []
+
+        def render_pair(entry):
+            unet = entry['unet']
+            commercial = entry['commercial']
+            return f"""<div class="thickness-pair">
+<h4>{entry['subject']} {entry['eye']} · {entry['valid_columns']:,} common valid columns ({entry['coverage_percent']:.1f}% of cube)</h4>
+<div class="thickness-images">
+<img src="{assets_rel_dir}/{unet['image_filename']}" alt="Signed U-Net RNFL thickness difference for {entry['subject']} {entry['eye']}" />
+<img src="{assets_rel_dir}/{commercial['image_filename']}" alt="Signed commercial RNFL thickness difference for {entry['subject']} {entry['eye']}" />
+</div>
+<p>U-Net: bias {unet['mean_um']:+.2f} µm, SD {unet['std_um']:.2f} µm, MAE {unet['mae_um']:.2f} µm. Commercial: bias {commercial['mean_um']:+.2f} µm, SD {commercial['std_um']:.2f} µm, MAE {commercial['mae_um']:.2f} µm.</p>
+</div>"""
+
+        selection_note = (
+            "Four examples span the ranked U-Net thickness MAE range; all remaining pairs appear in Appendix A."
+            if appendix_maps else "All available pairs are shown below."
+        )
+        thickness_section = f"""### 3.4 Full-Cube Signed RNFL Thickness Differences
+
+Each en face map shows predicted RNFL thickness minus the human-audited reference across the entire Disc Cube grid. The left image uses the U-Net; the right uses the raw commercial curves. Both use the same reference-valid columns and the same signed colour scale, centred at zero and spanning ±{limit_um:g} µm across all scans. Gray marks invalid or cup columns. Colours beyond the scale limits are saturated; numerical statistics use unsaturated values. Bias near zero is only desirable when SD and MAE are also small. These {len(thickness_maps)} pairs are held-out scans with distinct raw and audited curves; unchanged machine-derived reference regions remain in the full-cube statistics and should not be interpreted as independent manual corrections. {selection_note}
+
+{''.join(render_pair(entry) for entry in main_maps)}
+
+---
+
+"""
+        if appendix_maps:
+            thickness_appendix = f"""---
+
+## Appendix A. Remaining Full-Cube Thickness Difference Pairs
+
+The maps below use the same common-mask rule and ±{limit_um:g} µm colour scale as Section 3.4.
+
+{''.join(render_pair(entry) for entry in appendix_maps)}
+"""
+
     md = f"""<style>
 span[style*="#d97706"] code, span[style*="#d97706"] {{
     color: #ea580c !important;
@@ -394,12 +473,27 @@ span[style*="#d97706"] code, span[style*="#d97706"] {{
     .deep-dive-item img {{
         margin-top: 4px !important;
     }}
+    .thickness-pair {{
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+        margin: 12px 0 18px 0 !important;
+    }}
+    .thickness-images {{
+        display: flex !important;
+        gap: 8px !important;
+    }}
+    .thickness-images img {{
+        width: 49% !important;
+        height: auto !important;
+        object-fit: contain !important;
+    }}
 }}
 </style>
 
 # Volumetric RNFL Segmentation ({model_variant} Model): Multi-Subject Cohort Report
 
-**Cohort Scope**: {len(all_subjects)} Subjects ({subj_range_str}) | {n_scans} OCT Volumes ({n_od} OD + {n_os} OS)<br>
+**Evaluation Cohort Scope**: {len(all_subjects)} Subjects ({subj_range_str}) | {n_scans} OCT Volumes ({n_od} OD + {n_os} OS)<br>
+**Checkpoint Training ({training_stage})**: {training_summary}<br>
 **Modality**: Optovue Solix OCT `Disc Cube` ($320 \\times 768 \\times 320$ voxels; $18.81\\,\\mu\\text{{m}} \\times 3.12\\,\\mu\\text{{m}} \\times 18.75\\,\\mu\\text{{m}}$)<br>
 **Checkpoint Provenance**: NYUAD HPC Jubail (SLURM Job `{job_id}`) | Checkpoint: `{checkpoint_name}`<br>
 **Evaluation Runtime**: Local Apple MPS corrected-cohort rerun<br>
@@ -415,7 +509,7 @@ span[style*="#d97706"] code, span[style*="#d97706"] {{
 
 ## 1. Executive Summary
 
-This report delivers an automated cohort-wide comparative evaluation of the **Multi-Task Volumetric RNFL U-Net (<span style="color: #16a34a; font-weight: bold;">Green</span>)** against the **Human-Corrected Reference (<span style="color: #0284c7; font-weight: bold;">Cyan</span>)** and the **Commercial Solix Baseline (<span style="color: #dc2626; font-weight: bold;">Red</span>)** across {len(all_subjects)} subjects ({n_scans} eye-level OCT volumes). The checkpoint was trained on NYUAD Jubail and this corrected cohort evaluation was executed locally on Apple MPS.
+This report delivers an automated cohort-wide comparative evaluation of the **Multi-Task Volumetric RNFL U-Net (<span style="color: #16a34a; font-weight: bold;">Green</span>)** against the **Human-Corrected Reference (<span style="color: #0284c7; font-weight: bold;">Cyan</span>)** and the **Commercial Solix Baseline (<span style="color: #dc2626; font-weight: bold;">Red</span>)** across {len(all_subjects)} held-out subjects ({n_scans} eye-level OCT volumes). The checkpoint was trained on NYUAD Jubail and this corrected cohort evaluation was executed locally on Apple MPS.
 
 {kpi_grid_html}
 
@@ -431,7 +525,8 @@ This report delivers an automated cohort-wide comparative evaluation of the **Mu
 ## 2. Methods & Evaluation Protocol
 
 ### 2.1 Cohort Architecture & Data Modality
-- **Dataset**: {len(all_subjects)} deidentified human subjects from the NYUAD / Rokers Lab Solix OCT repository.
+- **Evaluation dataset**: {len(all_subjects)} deidentified human subjects from the NYUAD / Rokers Lab Solix OCT repository.
+{training_methods}
 - **Protocol**: Optovue Solix `Disc Cube` ($320 \\times 768 \\times 320$ voxels), covering $6.0 \\times 6.0 \\times 2.4\\,\\text{{mm}}^3$ centered on the optic nerve head (ONH).
 - **Voxel Pitch**: $18.81\\,\\mu\\text{{m}}$ (slow B-scan pitch) $\\times 3.12\\,\\mu\\text{{m}}$ (axial depth) $\\times 18.75\\,\\mu\\text{{m}}$ (fast A-scan pitch).
 
@@ -471,6 +566,8 @@ The chart shows all {n_scans} eye-level scans ranked best to worst by MABE. MABE
 {audit_section_text}
 
 ---
+
+{thickness_section}
 
 ## 4. External Evidence Context
 
@@ -586,4 +683,4 @@ Detailed cross-sectional analysis comparing optical intensity boundaries, vertic
 5. **Execution Summary**: Checkpoint `{checkpoint_name}` was evaluated using corrected biplanar inference. All visual assets, scan-level metrics, audit-correction fields, comparator missingness, and manual-review outputs are archived in `{assets_rel_dir}`.
 
 """
-    return md
+    return md + thickness_appendix
