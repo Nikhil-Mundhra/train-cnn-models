@@ -1,5 +1,8 @@
 #!/bin/bash -l
 # Separate Phase 2 experiment: two V100s on one node, using audited subjects.
+# Historical outcome: job 18703058 regressed on all 40 held-out scans.
+# Retained for reproducibility; do not promote its checkpoint or resubmit this
+# unchanged recipe as an improvement. See experiments/18703058_phase2_v100_failure.md.
 # Submit from ~/train-cnn-models with:
 #   sbatch model_training/train_rnfl_volumetric/train_rnfl_finetune_canonical_v100_jubail.slurm
 
