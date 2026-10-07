@@ -276,7 +276,7 @@ def render_complete_scan_forest_chart(scans: List[Dict[str, Any]], out_path: str
     return out_path
 
 
-def render_baseline_comparison_chart(scans: List[Dict[str, Any]], out_path: str, theme: str = "light") -> Optional[str]:
+def render_baseline_comparison_chart(scans: List[Dict[str, Any]], out_path: str, theme: str = "light", model_label: str = "U-Net") -> Optional[str]:
     """
     Figure 3: Edit-focused audit correction analysis.
     Supports clean publication white theme (for PDFs) and dark theme.
@@ -387,8 +387,8 @@ def render_baseline_comparison_chart(scans: List[Dict[str, Any]], out_path: str,
     ax2.axvline(3.12367, color=pal["threshold_line"], linestyle=":", linewidth=1.2, alpha=0.7)
     ax2.axvline(-3.12367, color=pal["bad_color"], linestyle=":", linewidth=1.2, alpha=0.5)
     ax2.set_xlim(-9.0, max(raw_errors) * 1.08)
-    ax2.set_title("Net Clinical Error Eliminated (Raw − U-Net)", color=pal["text"], fontsize=11.5, fontweight="bold", pad=12)
-    ax2.set_xlabel("Boundary error eliminated (µm; positive favours U-Net)", color=pal["subtext"], fontsize=10.0, fontweight="bold")
+    ax2.set_title(f"Net Clinical Error Eliminated (Raw − {model_label})", color=pal["text"], fontsize=11.5, fontweight="bold", pad=12)
+    ax2.set_xlabel(f"Boundary error eliminated (µm; positive favours {model_label})", color=pal["subtext"], fontsize=10.0, fontweight="bold")
     ax2.grid(axis="x", color=pal["grid"], linestyle="--", alpha=0.7)
 
     # --- Right: fidelity where the human reviewer accepted the raw boundary. ---
@@ -424,8 +424,8 @@ def render_baseline_comparison_chart(scans: List[Dict[str, Any]], out_path: str,
 
     legend = [
         Line2D([0], [0], marker='o', color='none', markerfacecolor=pal["bad_color"], markersize=8, label='Raw commercial'),
-        Line2D([0], [0], marker='s', color='none', markerfacecolor=pal["unet_color"], markersize=8, label='Volumetric U-Net (Benchmark)'),
-        Line2D([0], [0], marker='D', color='none', markerfacecolor=pal["val_color"], markersize=8, label='Volumetric U-Net (Held-Out [VAL])'),
+        Line2D([0], [0], marker='s', color='none', markerfacecolor=pal["unet_color"], markersize=8, label=f'Volumetric {model_label} (Benchmark)'),
+        Line2D([0], [0], marker='D', color='none', markerfacecolor=pal["val_color"], markersize=8, label=f'Volumetric {model_label} (Held-Out [VAL])'),
         Line2D([0], [0], color=pal["threshold_line"], linestyle=":", lw=1.5, label='±1 axial voxel (3.12 µm)'),
     ]
     fig.legend(handles=legend, facecolor=pal["legend_fc"], edgecolor=pal["legend_ec"],
@@ -452,7 +452,7 @@ def render_baseline_comparison_chart(scans: List[Dict[str, Any]], out_path: str,
     return out_path
 
 
-def render_cohort_summary_chart(scans: List[Dict[str, Any]], out_path: str, theme: str = "light") -> str:
+def render_cohort_summary_chart(scans: List[Dict[str, Any]], out_path: str, theme: str = "light", model_label: str = "U-Net") -> str:
     """
     Cohort Summary Chart (OD Dice, MABE & Cup IoU).
     Supports clean publication white theme (for PDFs) and dark theme.
@@ -495,8 +495,8 @@ def render_cohort_summary_chart(scans: List[Dict[str, Any]], out_path: str, them
     for label, scan in zip(axes[0].get_yticklabels(), od_scans):
         label.set_color(pal["val_color"] if scan.get('is_validation', False) else pal["tick"])
     axes[2].legend(handles=[
-        Line2D([0], [0], marker='o', color='none', markerfacecolor=pal["unet_color"], markersize=8, label='U-Net benchmark'),
-        Line2D([0], [0], marker='D', color='none', markerfacecolor=pal["unet_color"], markeredgecolor=pal["val_color"], markersize=8, label='U-Net held-out'),
+        Line2D([0], [0], marker='o', color='none', markerfacecolor=pal["unet_color"], markersize=8, label=f'{model_label} benchmark'),
+        Line2D([0], [0], marker='D', color='none', markerfacecolor=pal["unet_color"], markeredgecolor=pal["val_color"], markersize=8, label=f'{model_label} held-out'),
         Line2D([0], [0], marker='s', color='none', markerfacecolor=pal["bad_color"], markersize=8, label='Commercial (where available)'),
     ], facecolor=pal["legend_fc"], edgecolor=pal["legend_ec"], labelcolor=pal["legend_text"], loc="lower left", fontsize=8.5)
 

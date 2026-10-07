@@ -118,6 +118,9 @@ def main():
 
     with open(args.metrics_json, "r") as f:
         metrics_data = json.load(f)
+    model_label = metrics_data.get("metadata", {}).get("model_label") or (
+        "TransUNet" if "transunet" in args.model_variant.lower() else "U-Net"
+    )
 
     training_cohort = None
     fine_tune_cohort = None
@@ -150,15 +153,15 @@ def main():
         print("[Report Builder] Generating Dark Theme Figures for Markdown...")
         render_statistical_raincloud_chart(scans, os.path.join(assets_abs, "cohort_raincloud_distributions.png"), theme="dark")
         render_complete_scan_forest_chart(scans, os.path.join(assets_abs, "cohort_per_scan_forest_plot.png"), theme="dark")
-        render_baseline_comparison_chart(scans, os.path.join(assets_abs, "baseline_vs_unet_head_to_head.png"), theme="dark")
-        render_cohort_summary_chart(scans, os.path.join(assets_abs, "cohort_summary_chart.png"), theme="dark")
+        render_baseline_comparison_chart(scans, os.path.join(assets_abs, "baseline_vs_unet_head_to_head.png"), theme="dark", model_label=model_label)
+        render_cohort_summary_chart(scans, os.path.join(assets_abs, "cohort_summary_chart.png"), theme="dark", model_label=model_label)
 
         # Light theme (publication-standard white for PDF)
         print("[Report Builder] Generating Clean Publication White Figures for PDF...")
         render_statistical_raincloud_chart(scans, os.path.join(assets_abs, "cohort_raincloud_distributions_light.png"), theme="light")
         render_complete_scan_forest_chart(scans, os.path.join(assets_abs, "cohort_per_scan_forest_plot_light.png"), theme="light")
-        render_baseline_comparison_chart(scans, os.path.join(assets_abs, "baseline_vs_unet_head_to_head_light.png"), theme="light")
-        render_cohort_summary_chart(scans, os.path.join(assets_abs, "cohort_summary_chart_light.png"), theme="light")
+        render_baseline_comparison_chart(scans, os.path.join(assets_abs, "baseline_vs_unet_head_to_head_light.png"), theme="light", model_label=model_label)
+        render_cohort_summary_chart(scans, os.path.join(assets_abs, "cohort_summary_chart_light.png"), theme="light", model_label=model_label)
 
     selected_gallery = select_executive_gallery(
         metrics_data.get('gallery', []),

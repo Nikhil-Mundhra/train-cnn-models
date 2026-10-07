@@ -53,6 +53,9 @@ def generate_markdown_report(
     gallery: List[Dict[str, Any]] = select_executive_gallery(gallery_all, max_gallery_items)
     deep_dives: List[Dict[str, Any]] = metrics_data.get('deep_dives', [])
     thickness_maps: List[Dict[str, Any]] = metrics_data.get('thickness_maps', [])
+    metadata = metrics_data.get('metadata', {})
+    model_label = metadata.get('model_label') or ("TransUNet" if "transunet" in model_variant.lower() else "U-Net")
+    evaluation_runtime = str(metadata.get('evaluation_device') or 'unspecified device').upper()
 
     all_subjects = sorted(list(set(s['subject'] for s in scans))) if scans else []
     val_subjects = sorted(list(set(s['subject'] for s in scans if s.get('is_validation', False))))
@@ -496,7 +499,7 @@ span[style*="#d97706"] code, span[style*="#d97706"] {{
 **Checkpoint Training ({training_stage})**: {training_summary}<br>
 **Modality**: Optovue Solix OCT `Disc Cube` ($320 \\times 768 \\times 320$ voxels; $18.81\\,\\mu\\text{{m}} \\times 3.12\\,\\mu\\text{{m}} \\times 18.75\\,\\mu\\text{{m}}$)<br>
 **Checkpoint Provenance**: NYUAD HPC Jubail (SLURM Job `{job_id}`) | Checkpoint: `{checkpoint_name}`<br>
-**Evaluation Runtime**: Local Apple MPS corrected-cohort rerun<br>
+**Evaluation Runtime**: {evaluation_runtime} corrected-cohort evaluation<br>
 **Architecture / Variant**: **{model_variant} Architecture** ({model_desc})<br>
 **Inference Policy**: Corrected OS native-coordinate restoration before horizontal/vertical biplanar fusion
 
@@ -509,7 +512,7 @@ span[style*="#d97706"] code, span[style*="#d97706"] {{
 
 ## 1. Executive Summary
 
-This report delivers an automated cohort-wide comparative evaluation of the **Multi-Task Volumetric RNFL U-Net (<span style="color: #16a34a; font-weight: bold;">Green</span>)** against the **Human-Corrected Reference (<span style="color: #0284c7; font-weight: bold;">Cyan</span>)** and the **Commercial Solix Baseline (<span style="color: #dc2626; font-weight: bold;">Red</span>)** across {len(all_subjects)} held-out subjects ({n_scans} eye-level OCT volumes). The checkpoint was trained on NYUAD Jubail and this corrected cohort evaluation was executed locally on Apple MPS.
+This report delivers an automated cohort-wide comparative evaluation of the **Multi-Task Volumetric RNFL U-Net (<span style="color: #16a34a; font-weight: bold;">Green</span>)** against the **Human-Corrected Reference (<span style="color: #0284c7; font-weight: bold;">Cyan</span>)** and the **Commercial Solix Baseline (<span style="color: #dc2626; font-weight: bold;">Red</span>)** across {len(all_subjects)} held-out subjects ({n_scans} eye-level OCT volumes). The checkpoint was trained on NYUAD Jubail and this corrected cohort evaluation was executed using {evaluation_runtime}.
 
 {kpi_grid_html}
 
@@ -683,4 +686,5 @@ Detailed cross-sectional analysis comparing optical intensity boundaries, vertic
 5. **Execution Summary**: Checkpoint `{checkpoint_name}` was evaluated using corrected biplanar inference. All visual assets, scan-level metrics, audit-correction fields, comparator missingness, and manual-review outputs are archived in `{assets_rel_dir}`.
 
 """
-    return md + thickness_appendix
+    report = md + thickness_appendix
+    return report.replace("U-Net", model_label) if model_label != "U-Net" else report

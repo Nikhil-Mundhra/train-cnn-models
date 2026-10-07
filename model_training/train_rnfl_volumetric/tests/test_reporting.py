@@ -191,6 +191,15 @@ class TestMarkdownUtilities(unittest.TestCase):
         self.assertIn("±25 µm", md_with_maps)
         self.assertNotIn("### 3.4 Full-Cube", md)
 
+        metrics_data["metadata"].update({"model_label": "TransUNet", "evaluation_device": "cuda"})
+        md_transunet = generate_markdown_report(
+            metrics_data, "assets", "12345", "best_model.pt", model_variant="TransUNet Hybrid"
+        )
+        self.assertIn("Signed TransUNet RNFL thickness difference", md_transunet)
+        self.assertIn("**Evaluation Runtime**: CUDA", md_transunet)
+        self.assertNotIn("Local Apple MPS", md_transunet)
+        self.assertNotIn("U-Net", md_transunet)
+
         metrics_data["thickness_maps"] = [
             {
                 **metrics_data["thickness_maps"][0],

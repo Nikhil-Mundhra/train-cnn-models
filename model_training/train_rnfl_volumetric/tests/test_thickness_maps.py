@@ -84,6 +84,7 @@ class TestThicknessMaps(unittest.TestCase):
             pipeline = object.__new__(CohortEvaluatorPipeline)
             pipeline.assets_dir = temporary
             pipeline.biplanar_fusion = True
+            pipeline.model_label = "U-Net"
             pipeline.predictor = SimpleNamespace(predict=lambda *_args, **_kwargs: prediction)
             pipeline.metrics_calc = SimpleNamespace(evaluate_scan=lambda *_args: result)
             quality = SimpleNamespace(status="pass", flags=[], metrics={})

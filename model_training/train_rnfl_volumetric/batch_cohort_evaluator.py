@@ -836,8 +836,9 @@ class CohortVisualizer:
     6-panel 3-arm deep dives, and publication-ready cohort summary charts.
     """
 
-    def __init__(self, output_dir: str):
+    def __init__(self, output_dir: str, model_label: str = "U-Net"):
         self.output_dir = output_dir
+        self.model_label = model_label
         os.makedirs(self.output_dir, exist_ok=True)
 
     def render_gallery_panel(self, oct_volume: OCTVolume, prediction: VolumePrediction) -> str:
@@ -849,7 +850,7 @@ class CohortVisualizer:
         fig, axs = plt.subplots(1, 2, figsize=(16, 5), facecolor="black", constrained_layout=True)
         for col_idx, (title, mask, color) in enumerate([
             ("Reference Algorithm (Cyan)", mask_cyan, [0.0, 0.8, 1.0]),
-            ("Volumetric U-Net (Green)", mask_green, [0.1, 0.95, 0.3])
+            (f"Volumetric {self.model_label} (Green)", mask_green, [0.1, 0.95, 0.3])
         ]):
             ax = axs[col_idx]
             ax.imshow(raw_bscan, cmap="gray", aspect="auto")
@@ -927,14 +928,14 @@ class CohortVisualizer:
 
             _draw_bscan(ax_cyan, "Reference Algorithm (Cyan)", mask_cyan, [0.0, 0.8, 1.0], is_ref_arm=True)
             _draw_bscan(ax_red, "Commercial Solix (Red)", mask_red, [1.0, 0.2, 0.2], is_ref_arm=False)
-            _draw_bscan(ax_green, "Volumetric U-Net (Green)", mask_green, [0.1, 0.95, 0.3], is_ref_arm=False)
+            _draw_bscan(ax_green, f"Volumetric {self.model_label} (Green)", mask_green, [0.1, 0.95, 0.3], is_ref_arm=False)
         else:
             # Commercial red mask is not present or identical to reference; expand blue and green across Row 0
             ax_cyan = fig.add_subplot(gs[0, 0:3])
             ax_green = fig.add_subplot(gs[0, 3:6])
 
             _draw_bscan(ax_cyan, "Reference Algorithm (Cyan) [Commercial Accepted]", mask_cyan, [0.0, 0.8, 1.0], is_ref_arm=True)
-            _draw_bscan(ax_green, "Volumetric U-Net (Green)", mask_green, [0.1, 0.95, 0.3], is_ref_arm=False)
+            _draw_bscan(ax_green, f"Volumetric {self.model_label} (Green)", mask_green, [0.1, 0.95, 0.3], is_ref_arm=False)
 
         # Row 1, Col 0: Nasal Rim Zoom
         ax_left = fig.add_subplot(gs[1, 0:2])
@@ -945,7 +946,7 @@ class CohortVisualizer:
         ax_left.imshow(over_l, aspect="auto")
         ax_left.set_xlim(60, 140)
         ax_left.set_ylim(370, 220)
-        ax_left.set_title("Nasal Rim Zoom\n[Cyan: Ref vs Green: U-Net]", color="white", fontsize=11, fontweight="bold")
+        ax_left.set_title(f"Nasal Rim Zoom\n[Cyan: Ref vs Green: {self.model_label}]", color="white", fontsize=11, fontweight="bold")
         ax_left.axis("off")
 
         # Row 1, Col 1: Temporal Rim Zoom
@@ -957,7 +958,7 @@ class CohortVisualizer:
         ax_right.imshow(over_r, aspect="auto")
         ax_right.set_xlim(180, 260)
         ax_right.set_ylim(370, 220)
-        ax_right.set_title("Temporal Rim Zoom\n[Cyan: Ref vs Green: U-Net]", color="white", fontsize=11, fontweight="bold")
+        ax_right.set_title(f"Temporal Rim Zoom\n[Cyan: Ref vs Green: {self.model_label}]", color="white", fontsize=11, fontweight="bold")
         ax_right.axis("off")
 
         # Row 1, Col 2: En Face Mid-Rim
@@ -967,7 +968,7 @@ class CohortVisualizer:
         over_ef[enface_cyan == 1] = [0.0, 0.8, 1.0, 0.16]
         over_ef[enface_green == 1] = [0.1, 0.95, 0.3, 0.20]
         ax_ef.imshow(over_ef, aspect="auto")
-        ax_ef.set_title(f"En Face Mid-Rim Plane (y={y_enface})\n[Cyan: Ref vs Green: U-Net]", color="white", fontsize=11, fontweight="bold")
+        ax_ef.set_title(f"En Face Mid-Rim Plane (y={y_enface})\n[Cyan: Ref vs Green: {self.model_label}]", color="white", fontsize=11, fontweight="bold")
         ax_ef.axis("off")
 
         filename = f"deep_dive_{oct_volume.subject}_{oct_volume.eye}.png"
@@ -981,7 +982,7 @@ class CohortVisualizer:
         from build_cohort_report import render_cohort_summary_chart
         suffix = "_light.png" if theme == "light" else ".png"
         out_path = os.path.join(self.output_dir, f"cohort_summary_chart{suffix}")
-        return render_cohort_summary_chart([r.to_dict() for r in scan_results], out_path, theme=theme)
+        return render_cohort_summary_chart([r.to_dict() for r in scan_results], out_path, theme=theme, model_label=self.model_label)
 
     def render_statistical_raincloud_chart(self, scan_results: List[ScanEvaluationResult], theme: str = "dark") -> str:
         """Renders publication Figure 1: Raincloud distributions."""
@@ -1002,7 +1003,7 @@ class CohortVisualizer:
         from build_cohort_report import render_baseline_comparison_chart
         suffix = "_light.png" if theme == "light" else ".png"
         out_path = os.path.join(self.output_dir, f"baseline_vs_unet_head_to_head{suffix}")
-        return render_baseline_comparison_chart([r.to_dict() for r in scan_results], out_path, theme=theme)
+        return render_baseline_comparison_chart([r.to_dict() for r in scan_results], out_path, theme=theme, model_label=self.model_label)
 
 
 # ============================================================================
@@ -1055,6 +1056,8 @@ class CohortEvaluatorPipeline:
 
         # Auto-detect or select model family
         ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        checkpoint_args = ckpt.get("args", {}) if isinstance(ckpt, dict) else {}
+        self.model_label = "TransUNet" if checkpoint_args.get("arch") == "transunet" else "U-Net"
         is_3d = False
         if model_family == "3d":
             is_3d = True
@@ -1099,7 +1102,7 @@ class CohortEvaluatorPipeline:
             axial_res_um=AXIAL_RES_UM,
             include_volumetric_metrics=self.include_volumetric_metrics,
         )
-        self.visualizer = CohortVisualizer(output_dir=self.assets_dir)
+        self.visualizer = CohortVisualizer(output_dir=self.assets_dir, model_label=self.model_label)
 
     def discover_volumes(self) -> List[OCTVolume]:
         """Scans dataset root and pairs DICOM volumes with matching XML curves."""
@@ -1165,7 +1168,7 @@ class CohortEvaluatorPipeline:
         result.qc_flags = quality.flags
         result.qc_metrics = quality.metrics
 
-        print(f"[{vol.subject} {vol.eye}] U-Net Dice: {result.unet_dice:.4f} | MABE: {result.unet_mabe:.2f} µm | P95: {result.unet_p95:.2f} µm | Cup IoU: {result.unet_cup_iou:.4f}")
+        print(f"[{vol.subject} {vol.eye}] {self.model_label} Dice: {result.unet_dice:.4f} | MABE: {result.unet_mabe:.2f} µm | P95: {result.unet_p95:.2f} µm | Cup IoU: {result.unet_cup_iou:.4f}")
         print(f"[{vol.subject} {vol.eye}] QC: {result.qc_status} | Flags: {', '.join(result.qc_flags) if result.qc_flags else 'none'}")
         if result.bad_dice is not None:
             print(f"[{vol.subject} {vol.eye}] Bad   Dice: {result.bad_dice:.4f} | MABE: {result.bad_mabe:.2f} µm | P95: {result.bad_p95:.2f} µm | Cup IoU: {result.bad_cup_iou:.4f}")
@@ -1246,7 +1249,7 @@ class CohortEvaluatorPipeline:
             )
             for entry in thickness_manifest:
                 with np.load(Path(self.assets_dir) / entry['array_filename']) as maps:
-                    for key, label in (('unet', 'U-Net'), ('commercial', 'Commercial')):
+                    for key, label in (('unet', self.model_label), ('commercial', 'Commercial')):
                         error = maps[f'{key}_error_um']
                         filename = f"thickness_error_{entry['subject']}_{entry['eye']}_{key}.png"
                         render_signed_error_map(
@@ -1263,6 +1266,8 @@ class CohortEvaluatorPipeline:
         with open(json_path, "w") as f:
             json.dump({
                 'metadata': {
+                    'model_label': self.model_label,
+                    'evaluation_device': str(self.device),
                     'orientation_mode': self.os_orientation_mode,
                     'biplanar_fusion': self.biplanar_fusion,
                     'scan_count': len(cohort_results),
