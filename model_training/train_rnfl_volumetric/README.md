@@ -85,6 +85,10 @@ export KMP_DUPLICATE_LIB_OK=TRUE
 2. **Standardized Eye Orientation**: Anatomically normalizes left eyes (OS) by horizontal flipping, ensuring nasal and temporal bundles are uniformly oriented for the neural network.
 3. **Multi-Task Dense + Boundary Learning**: Combines pixel-level volumetric segmentation (for 3D mesh reconstruction in Slicer) with direct continuous boundary regression in microns.
 4. **Topological Surface Ordering**: Enforces $\text{ReLU}(\hat{y}_{\text{ILM}} - \hat{y}_{\text{NFL}})$ penalty, mathematically preventing the inner retinal surface from crossing below the outer boundary.
+5. **TransUNet Hybrid CNN-Transformer Variant (`transunet.py`)**:
+   - Combines a multi-scale CNN stem (capturing high-frequency retinal boundary edges at $1/1$, $1/2$, $1/4$, $1/8$ resolutions) with a Vision Transformer (ViT) bottleneck operating at $1/16$ grid scale ($48 \times 20 = 960$ tokens for $768 \times 320$ B-scans).
+   - Models long-range retinal arcade and peripapillary dependencies across vessel shadows and optic cup boundaries.
+   - Restores sub-millimeter axial resolution through a Cascaded Upsampler (CUP) decoder with early CNN skip connections, coupled to our continuous 1D boundary regression heads.
 
 ---
 
@@ -96,11 +100,13 @@ train-cnn-models/model_training/train_rnfl_volumetric/
 ├── evaluate_baseline.py   <- Computes quantitative Solix machine baseline vs ground truth
 ├── dataset.py             <- SolixRNFLDataset: DICOM seeker, 2.5D batching, ground-truth parser
 ├── model.py               <- VolumetricRNFLNet: 2.5D multi-task residual network
+├── transunet.py           <- TransUNetRNFLNet: Hybrid CNN-ViT encoder with Cascaded Upsampler (CUP)
 ├── losses.py              <- VolumetricRNFLLoss: Dice, boundary Huber, cup BCE, topo penalty
-├── train.py               <- Subject-grouped training loop with validation & checkpointing
+├── train.py               <- Subject-grouped training loop with validation & checkpointing (--arch transunet support)
 ├── export_to_slicer.py    <- Full-volume inference and interactive 3D Slicer exporter
 ├── batch_cohort_evaluator.py <- Subject-disjoint cohort evaluation and report assets
 ├── build_cohort_report.py <- Executive cohort report CLI orchestrator
+├── train_rnfl_transunet_jubail.slurm <- SLURM script for A100 HPC cluster training of TransUNet
 ├── reporting/             <- Modular visualization and report generation suite
 │   ├── theme.py           <- Dual-theme color palettes (light for PDF, dark for markdown)
 │   ├── charts.py          <- High-res publication chart generators
@@ -113,6 +119,7 @@ train-cnn-models/model_training/train_rnfl_volumetric/
 ├── EVALUATION_AND_QC.md   <- Evaluation, QC, and comparator protocol
 └── tests/
     ├── test_pipeline.py   <- Unit tests for dataset, model, loss, and disc geometry
+    ├── test_transunet.py  <- Unit tests for TransUNet forward pass, tensor dimensions, and backward gradient flow
     ├── test_orientation_qc.py <- Orientation, manifest, and QC regression tests
     ├── test_dataset_and_export.py <- Curve matching, multi-arm discovery, and Slicer export tests
     └── test_reporting.py  <- Unit tests for charts, markdown normalization, and PDF compiler
@@ -155,6 +162,25 @@ export KMP_DUPLICATE_LIB_OK=TRUE
 - `--lr`: Initial learning rate (default: `3e-4` with Cosine Annealing scheduler).
 - `--context_slices`: Number of adjacent B-scans in 2.5D tensor (default: 5).
 - `--checkpoint_dir`: Directory to save `best_volumetric_rnfl_net.pt`.
+
+#### Training with the TransUNet Architecture:
+To train using the hybrid CNN-Transformer architecture:
+```bash
+.venv/bin/python model_training/train_rnfl_volumetric/train.py \
+    --dataset_root "/Users/nikhilmundhra/Library/CloudStorage/Box-Box/OCT_Segmentations_Solix/deidentified-new" \
+    --split_manifest "model_training/train_rnfl_3d/manifests/stratified_held_out_v2.json" \
+    --train_manifest "model_training/train_rnfl_3d/manifests/phase1_train_manifest.json" \
+    --arch "transunet" \
+    --transunet_hidden_size 256 \
+    --transunet_layers 6 \
+    --transunet_heads 8 \
+    --transunet_mlp_dim 512 \
+    --epochs 20 \
+    --batch_size 16 \
+    --accum_steps 2 \
+    --lr 3e-4 \
+    --checkpoint_dir "./checkpoints/rnfl_transunet"
+```
 
 ### Running Volumetric Inference & Exporting to 3D Slicer
 To segment an entire 320-slice DICOM volume and visualize the 3D surface model in Slicer:

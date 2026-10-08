@@ -339,6 +339,7 @@ def train(args):
     best_score = float('inf')
     best_checkpoint_path = os.path.join(args.checkpoint_dir, "best_volumetric_rnfl_net.pt")
     training_start_time = time.time()
+    start_epoch = 1
 
     if args.resume_checkpoint and os.path.isfile(args.resume_checkpoint):
         if rank == 0:
@@ -362,9 +363,35 @@ def train(args):
         else:
             model.load_state_dict(state_dict)
 
-        if rank == 0 and 'val_metrics' in ckpt and 'peri_nfl_mabe' in ckpt['val_metrics']:
-            baseline_mabe = ckpt['val_metrics']['peri_nfl_mabe']
-            print(f"[Training] Baseline peripapillary NFL MABE from checkpoint: {baseline_mabe:.2f} um")
+        if isinstance(ckpt, dict):
+            if 'epoch' in ckpt:
+                start_epoch = ckpt['epoch'] + 1
+                if rank == 0:
+                    print(f"[Training] Resuming from epoch {start_epoch} (completed epoch {ckpt['epoch']})")
+            if 'optimizer_state_dict' in ckpt:
+                try:
+                    optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+                    if rank == 0:
+                        print("[Training] Optimizer state successfully restored.")
+                except Exception as e:
+                    if rank == 0:
+                        print(f"[Training] Notice: Could not restore optimizer state: {e}")
+            if 'scheduler_state_dict' in ckpt:
+                try:
+                    scheduler.load_state_dict(ckpt['scheduler_state_dict'])
+                except Exception:
+                    pass
+            elif start_epoch > 1:
+                # Advance scheduler to current epoch
+                for _ in range(start_epoch - 1):
+                    scheduler.step()
+
+            if 'val_metrics' in ckpt and 'peri_nfl_mabe' in ckpt['val_metrics']:
+                baseline_mabe = ckpt['val_metrics']['peri_nfl_mabe']
+                best_peri_mabe = baseline_mabe
+                best_score = baseline_mabe + 50.0 * max(0.0, 0.75 - ckpt['val_metrics'].get('dice', 0.8))
+                if rank == 0:
+                    print(f"[Training] Baseline peripapillary NFL MABE from checkpoint: {baseline_mabe:.2f} um")
 
     # Wrap model with DistributedDataParallel if running multi-GPU
     raw_model = model
@@ -373,11 +400,11 @@ def train(args):
 
     if rank == 0:
         print("\n==========================================================================================")
-        print("=== STARTING VOLUMETRIC RNFL MODEL TRAINING                                           ===")
+        print(f"=== STARTING VOLUMETRIC RNFL MODEL TRAINING (Epochs {start_epoch} -> {args.epochs})   ===")
         print("==========================================================================================")
 
 
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(start_epoch, args.epochs + 1):
         if is_distributed and train_sampler is not None:
             train_sampler.set_epoch(epoch)
         model.train()
