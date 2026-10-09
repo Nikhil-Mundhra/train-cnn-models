@@ -130,6 +130,8 @@ OUTPUT_PDF="${REPORT_DIR}/executive_cohort_rnfl_report_biplanar_job_${SLURM_JOB_
 
 "${PYTHON_BIN}" "${REPORT_SCRIPT}" \
     --metrics_json "${ASSETS_DIR}/cohort_evaluation_metrics.json" \
+    --train_manifest "${TRAIN_MANIFEST}" \
+    --training_stage "Phase 1 only; no audited fine-tuning" \
     --assets_dir "${ASSETS_DIR}" \
     --output_md "${OUTPUT_MD}" \
     --output_pdf "${OUTPUT_PDF}" \

@@ -30,6 +30,7 @@ REPO_DIR="${HOME}/train-cnn-models"
 EVAL_SCRIPT="${REPO_DIR}/model_training/train_rnfl_volumetric/batch_cohort_evaluator.py"
 REPORT_SCRIPT="${REPO_DIR}/model_training/train_rnfl_volumetric/build_cohort_report.py"
 SPLIT_MANIFEST="${REPO_DIR}/model_training/train_rnfl_3d/manifests/stratified_held_out_v2.json"
+TRAIN_MANIFEST="${REPO_DIR}/model_training/train_rnfl_3d/manifests/phase1_train_manifest.json"
 
 echo "=================================================================="
 echo "=== Evaluating Model (18563914) with Adaptive Deep-Dive Panels ==="
@@ -51,6 +52,8 @@ OUTPUT_PDF="${REPORT_DIR}/executive_cohort_rnfl_report_biplanar_job_18563914_202
 
 "${PYTHON_BIN}" "${REPORT_SCRIPT}" \
     --metrics_json "${ASSETS_DIR}/cohort_evaluation_metrics.json" \
+    --train_manifest "${TRAIN_MANIFEST}" \
+    --training_stage "Phase 1 only; no audited fine-tuning" \
     --assets_dir "${ASSETS_DIR}" \
     --output_md "${OUTPUT_MD}" \
     --output_pdf "${OUTPUT_PDF}" \

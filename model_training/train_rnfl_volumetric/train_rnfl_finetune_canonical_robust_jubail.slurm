@@ -3,7 +3,7 @@
 # SLURM Job Script: Phase 2 Canonical Robust Fine-Tuning on Audited Cohort (Jubail)
 # Features:
 #   - Resumes from Phase 1 Pre-Trained Canonical Robust Model (STN + Robust Augmentations)
-#   - Trains for 10 epochs exclusively on 10 human-audited training subjects
+#   - Trains for 10 epochs on the frozen 20-subject audited training manifest
 #   - Reduced learning rate (lr = 2e-5) to preserve global morphology
 #   - Strict Zero-Leakage Guarantee: held-out validation cohort isolated
 # Partition: nvidia (NVIDIA H200 GPU, 141GB HBM3e VRAM)
@@ -14,7 +14,7 @@
 #SBATCH -n 1                           # 1 task
 #SBATCH -c 16                          # 16 CPU cores for high-throughput data loading
 #SBATCH --mem=64G                      # 64 GB system memory
-#SBATCH -t 01:15:00                    # Wall clock time limit (1 hour 15 min sufficient on H200)
+#SBATCH -t 03:00:00                    # Allow 20-subject training and 20-subject validation
 #SBATCH -J rnfl_finetune_canonical     # Job name
 #SBATCH -o slurm_rnfl_finetune_canonical_%j.out  # Standard output log (%j expands to jobID)
 #SBATCH -e slurm_rnfl_finetune_canonical_%j.err  # Standard error log
@@ -53,17 +53,8 @@ TRAIN_SCRIPT="${REPO_DIR}/model_training/train_rnfl_volumetric/train.py"
 EVAL_SCRIPT="${REPO_DIR}/model_training/train_rnfl_volumetric/batch_cohort_evaluator.py"
 REPORT_SCRIPT="${REPO_DIR}/model_training/train_rnfl_volumetric/build_cohort_report.py"
 
-# Pre-trained base weights: allow user override or auto-discover latest Phase 1 canonical run
-if [ -n "$1" ] && [ -f "$1" ]; then
-    BASE_CHECKPOINT="$1"
-else
-    # Auto-discover most recent Phase 1 canonical robust checkpoint
-    BASE_CHECKPOINT=$(find "${SCRATCH_DIR}/checkpoints" -name "best_volumetric_rnfl_net.pt" -path "*canonical_robust*" 2>/dev/null | sort -V | tail -n 1)
-    if [ -z "${BASE_CHECKPOINT}" ] || [ ! -f "${BASE_CHECKPOINT}" ]; then
-        # Fallback to standard biplanar production checkpoint
-        BASE_CHECKPOINT="${SCRATCH_DIR}/checkpoints/rnfl_biplanar_18563914/best_volumetric_rnfl_net.pt"
-    fi
-fi
+# Canonical Robust Phase 1 checkpoint from the current 20-subject report.
+BASE_CHECKPOINT="${1:-${SCRATCH_DIR}/checkpoints/rnfl_canonical_robust_18697275/best_volumetric_rnfl_net.pt}"
 
 if [ ! -f "${BASE_CHECKPOINT}" ]; then
     echo "[ERROR] Base checkpoint not found at: ${BASE_CHECKPOINT}"
@@ -78,22 +69,23 @@ ASSETS_DIR="${REPORT_DIR}/assets/executive_cohort_report"
 mkdir -p "${CHECKPOINT_DIR}"
 mkdir -p "${ASSETS_DIR}"
 
-TRAIN_AUDITED="BEH0181,BEH0185,BEH0298,BEH0321,BEH0323,BEH0348,BEH0349,BEH0350,BEH0352,BEH0362"
-VAL_SUBJECTS="BEH0335,BEH0314,BEH0174,BEH0310,BEH0354,BEH0086,BEH0090,BEH0096,BEH0241,BEH0284"
+SPLIT_MANIFEST="${REPO_DIR}/model_training/train_rnfl_3d/manifests/stratified_held_out_v2.json"
+PRETRAIN_MANIFEST="${REPO_DIR}/model_training/train_rnfl_3d/manifests/phase1_train_manifest.json"
+TRAIN_MANIFEST="${REPO_DIR}/model_training/train_rnfl_3d/manifests/phase2_audited_train_manifest.json"
 
 echo ""
 echo "##################################################################"
-echo "### STEP 1: FINE-TUNING ON 10 HUMAN-AUDITED TRAINING SUBJECTS  ###"
+echo "### STEP 1: FINE-TUNING ON 20 HUMAN-AUDITED TRAINING SUBJECTS  ###"
 echo "##################################################################"
 echo "Base Checkpoint:   ${BASE_CHECKPOINT}"
-echo "Training Subjects: ${TRAIN_AUDITED}"
-echo "Val Subjects:      ${VAL_SUBJECTS}"
+echo "Training Manifest: ${TRAIN_MANIFEST}"
+echo "Val Manifest:      ${SPLIT_MANIFEST}"
 
 "${PYTHON_BIN}" "${TRAIN_SCRIPT}" \
     --dataset_root "${DATASET_ROOT}" \
     --resume_checkpoint "${BASE_CHECKPOINT}" \
-    --train_subjects "${TRAIN_AUDITED}" \
-    --val_subjects "${VAL_SUBJECTS}" \
+    --train_manifest "${TRAIN_MANIFEST}" \
+    --split_manifest "${SPLIT_MANIFEST}" \
     --epochs 10 \
     --base_channels 32 \
     --batch_size 64 \
@@ -106,6 +98,7 @@ echo "Val Subjects:      ${VAL_SUBJECTS}"
     --enable_orthogonal \
     --use_stn \
     --robust_augment \
+    --no_augment \
     --device "cuda" \
     --checkpoint_dir "${CHECKPOINT_DIR}" \
     --log_interval 20
@@ -125,7 +118,7 @@ echo "##################################################################"
     --checkpoint "${BEST_MODEL}" \
     --dataset_root "${DATASET_ROOT}" \
     --output_dir "${REPORT_DIR}" \
-    --val_subjects "${VAL_SUBJECTS}" \
+    --split_manifest "${SPLIT_MANIFEST}" \
     --os_orientation_mode "corrected" \
     --disc_cut_mode "cup" \
     --batch_size 16 \
@@ -144,6 +137,9 @@ OUTPUT_PDF="${REPORT_DIR}/executive_cohort_rnfl_report_canonical_finetuned_job_$
 
 "${PYTHON_BIN}" "${REPORT_SCRIPT}" \
     --metrics_json "${ASSETS_DIR}/cohort_evaluation_metrics.json" \
+    --train_manifest "${PRETRAIN_MANIFEST}" \
+    --fine_tune_manifest "${TRAIN_MANIFEST}" \
+    --training_stage "Phase 1 pretraining and Phase 2 audited fine-tuning" \
     --assets_dir "${ASSETS_DIR}" \
     --output_md "${OUTPUT_MD}" \
     --output_pdf "${OUTPUT_PDF}" \

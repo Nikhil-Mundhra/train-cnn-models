@@ -3,8 +3,8 @@
 # SLURM Job Script: Phase 2 Fine-Tuning on Human-Audited Subjects (Jubail)
 # Dataset: Strictly /scratch/${USER}/deidentified-new
 # Split:
-#   - Train (10 Audited Subjects): BEH0181,BEH0185,BEH0298,BEH0321,BEH0323,BEH0348,BEH0349,BEH0350,BEH0352,BEH0362
-#   - Val   (10 Held-Out Subjects): BEH0335,BEH0314,BEH0174,BEH0310,BEH0354,BEH0086,BEH0090,BEH0096,BEH0241,BEH0284
+#   - Train: frozen Phase 2 audited manifest (20 subjects, 40 scans)
+#   - Val: frozen stratified held-out v2 manifest (20 subjects, 40 scans)
 #   - ZERO OVERLAP GUARANTEE between train and val
 # Partition: nvidia (NVIDIA A100 GPU, 40GB VRAM)
 # ==============================================================================
@@ -52,12 +52,8 @@ TRAIN_SCRIPT="${REPO_DIR}/model_training/train_rnfl_volumetric/train.py"
 EVAL_SCRIPT="${REPO_DIR}/model_training/train_rnfl_volumetric/batch_cohort_evaluator.py"
 REPORT_SCRIPT="${REPO_DIR}/model_training/train_rnfl_volumetric/build_cohort_report.py"
 
-# Pre-trained base weights from Phase 1 (61-subject run 18266075 or latest)
-BASE_CHECKPOINT="${SCRATCH_DIR}/checkpoints/rnfl_biplanar_18266075/best_volumetric_rnfl_net.pt"
-if [ ! -f "${BASE_CHECKPOINT}" ]; then
-    # Fallback to local checkpoints directory inside repo if present
-    BASE_CHECKPOINT="${REPO_DIR}/checkpoints/jubail/rnfl_biplanar_18266075/best_volumetric_rnfl_net.pt"
-fi
+# Pre-trained Phase 1 checkpoint evaluated in the 20-subject report.
+BASE_CHECKPOINT="${SCRATCH_DIR}/checkpoints/rnfl_biplanar_18563914/best_volumetric_rnfl_net.pt"
 
 if [ ! -f "${BASE_CHECKPOINT}" ]; then
     echo "[ERROR] Base checkpoint not found at: ${BASE_CHECKPOINT}"
@@ -71,22 +67,23 @@ ASSETS_DIR="${REPORT_DIR}/assets/executive_cohort_report"
 mkdir -p "${CHECKPOINT_DIR}"
 mkdir -p "${ASSETS_DIR}"
 
-TRAIN_AUDITED="BEH0181,BEH0185,BEH0298,BEH0321,BEH0323,BEH0348,BEH0349,BEH0350,BEH0352,BEH0362"
-VAL_SUBJECTS="BEH0335,BEH0314,BEH0174,BEH0310,BEH0354,BEH0086,BEH0090,BEH0096,BEH0241,BEH0284"
+SPLIT_MANIFEST="${REPO_DIR}/model_training/train_rnfl_3d/manifests/stratified_held_out_v2.json"
+PRETRAIN_MANIFEST="${REPO_DIR}/model_training/train_rnfl_3d/manifests/phase1_train_manifest.json"
+TRAIN_MANIFEST="${REPO_DIR}/model_training/train_rnfl_3d/manifests/phase2_audited_train_manifest.json"
 
 echo ""
 echo "##################################################################"
-echo "### STEP 1: FINE-TUNING ON 10 HUMAN-AUDITED TRAINING SUBJECTS  ###"
+echo "### STEP 1: FINE-TUNING ON 20 HUMAN-AUDITED TRAINING SUBJECTS  ###"
 echo "##################################################################"
 echo "Base Checkpoint:   ${BASE_CHECKPOINT}"
-echo "Training Subjects: ${TRAIN_AUDITED}"
-echo "Val Subjects:      ${VAL_SUBJECTS}"
+echo "Training Manifest: ${TRAIN_MANIFEST}"
+echo "Val Manifest:      ${SPLIT_MANIFEST}"
 
 "${PYTHON_BIN}" "${TRAIN_SCRIPT}" \
     --dataset_root "${DATASET_ROOT}" \
     --resume_checkpoint "${BASE_CHECKPOINT}" \
-    --train_subjects "${TRAIN_AUDITED}" \
-    --val_subjects "${VAL_SUBJECTS}" \
+    --train_manifest "${TRAIN_MANIFEST}" \
+    --split_manifest "${SPLIT_MANIFEST}" \
     --epochs 10 \
     --base_channels 32 \
     --batch_size 32 \
@@ -97,7 +94,7 @@ echo "Val Subjects:      ${VAL_SUBJECTS}"
     --num_workers 6 \
     --precision "bf16" \
     --enable_orthogonal \
-    --augment \
+    --no_augment \
     --device "cuda" \
     --checkpoint_dir "${CHECKPOINT_DIR}" \
     --log_interval 20
@@ -117,7 +114,7 @@ echo "##################################################################"
     --checkpoint "${BEST_MODEL}" \
     --dataset_root "${DATASET_ROOT}" \
     --output_dir "${REPORT_DIR}" \
-    --val_subjects "${VAL_SUBJECTS}" \
+    --split_manifest "${SPLIT_MANIFEST}" \
     --os_orientation_mode "corrected" \
     --disc_cut_mode "cup" \
     --batch_size 8 \
@@ -135,13 +132,16 @@ OUTPUT_PDF="${REPORT_DIR}/executive_cohort_rnfl_report_finetuned_job_${SLURM_JOB
 
 "${PYTHON_BIN}" "${REPORT_SCRIPT}" \
     --metrics_json "${ASSETS_DIR}/cohort_evaluation_metrics.json" \
+    --train_manifest "${PRETRAIN_MANIFEST}" \
+    --fine_tune_manifest "${TRAIN_MANIFEST}" \
+    --training_stage "Phase 1 pretraining and Phase 2 audited fine-tuning" \
     --assets_dir "${ASSETS_DIR}" \
     --output_md "${OUTPUT_MD}" \
     --output_pdf "${OUTPUT_PDF}" \
     --job_id "${SLURM_JOB_ID}" \
     --checkpoint_name "rnfl_biplanar_finetuned_${SLURM_JOB_ID}" \
     --model_variant "Bi-Planar Orthogonal Fine-Tuned" \
-    --model_desc "Bi-Planar 2.5D ResNet (6.6M), Phase 1 61s Pre-trained + Phase 2 10s Audited Fine-Tuned (lr=2e-5)"
+    --model_desc "Bi-Planar 2.5D ResNet (6.6M), Phase 1 119-subject pretraining + Phase 2 20-subject audited fine-tuning (lr=2e-5)"
 
 echo "[Step 3 SUCCESS] Executive Report Compiled: ${OUTPUT_PDF}"
 echo "=================================================================="
