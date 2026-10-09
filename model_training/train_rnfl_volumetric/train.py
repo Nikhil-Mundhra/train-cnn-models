@@ -107,6 +107,9 @@ def validate(model, val_loader, criterion, device, autocast_device="cpu", amp_dt
                 else:
                     preds = model(batch['image'])
 
+                # Ensure FP32 for loss and metric reductions
+                preds = {k: (v.float() if isinstance(v, torch.Tensor) else v) for k, v in preds.items()}
+
                 losses = criterion(preds, batch)
                 val_loss += losses['loss'].item()
 
@@ -441,11 +444,14 @@ def train(args):
                     preds = model(batch['image'], eye_idx=eye_idx)
                 else:
                     preds = model(batch['image'])
-                loss_dict = criterion(preds, batch)
-                loss = loss_dict['loss'] / args.accum_steps
-                if 'predicted_tilt_deg' in preds:
-                    # Mild L2 regularization to anchor STN when scan is naturally horizontal
-                    loss = loss + (1e-4 * (preds['predicted_tilt_deg'] ** 2).mean()) / args.accum_steps
+
+            # Upcast predictions to FP32 for loss evaluation to prevent FP16 sum overflow (>65,504)
+            preds_fp32 = {k: (v.float() if isinstance(v, torch.Tensor) else v) for k, v in preds.items()}
+            loss_dict = criterion(preds_fp32, batch)
+            loss = loss_dict['loss'] / args.accum_steps
+            if 'predicted_tilt_deg' in preds_fp32:
+                # Mild L2 regularization to anchor STN when scan is naturally horizontal
+                loss = loss + (1e-4 * (preds_fp32['predicted_tilt_deg'] ** 2).mean()) / args.accum_steps
 
 
             if args.precision == "fp16":

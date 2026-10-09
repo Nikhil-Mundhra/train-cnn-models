@@ -125,7 +125,7 @@ class VolumetricRNFLLoss(nn.Module):
             edge_smooth = F.conv2d(edge_raw, k, padding=(k_size//2, 0))
 
             x_coords = torch.linspace(-1, 1, W_img, dtype=torch.float32, device=img.device).unsqueeze(0).expand(B, -1)
-            norm_y = 2.0 * preds['nfl_pred'] / (H_img - 2) - 1.0
+            norm_y = (2.0 * preds['nfl_pred'] / (H_img - 2) - 1.0).clamp(-1.0, 1.0)
             grid = torch.stack([x_coords, norm_y], dim=-1).unsqueeze(1)
             sampled_edge = F.grid_sample(edge_smooth, grid, mode='bilinear', align_corners=True).squeeze(1).squeeze(1)
 
