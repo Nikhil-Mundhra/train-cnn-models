@@ -6,7 +6,7 @@
 # Features:
 #   - 4x NVIDIA V100 GPUs via PyTorch DDP (torchrun --nproc_per_node=4)
 #   - Mixed Precision FP16 with GradScaler (tailored for Volta V100 Tensor Cores)
-#   - Effective Batch Size 32 (4 GPUs x 8 per-device batch x 1 accum, optimal V100 policy)
+#   - Effective Batch Size 64 (4 GPUs x 16 per-device batch x 1 accum)
 #   - Orthogonal Bi-Planar Slicing (Horizontal + Vertical Fusion)
 #   - Zero-Leakage Guarantee: Certified disjoint from stratified_held_out_v2.json
 # Partition: nvidia (4x NVIDIA V100 GPUs, 128GB aggregate VRAM)
@@ -100,9 +100,9 @@ export OMP_NUM_THREADS=4
     --train_manifest "${TRAIN_MANIFEST}" \
     --epochs 20 \
     --base_channels 32 \
-    --batch_size 8 \
+    --batch_size 16 \
     --accum_steps 1 \
-    --lr 3e-4 \
+    --lr 5e-4 \
     --weight_decay 1e-4 \
     --context_slices 5 \
     --num_workers 4 \
