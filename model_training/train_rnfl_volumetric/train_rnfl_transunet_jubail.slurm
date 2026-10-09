@@ -91,6 +91,7 @@ echo "##################################################################"
     --num_workers 8 \
     --precision "bf16" \
     --enable_orthogonal \
+    --use_stn \
     --device "cuda" \
     --checkpoint_dir "${CHECKPOINT_DIR}" \
     --log_interval 25
@@ -112,6 +113,7 @@ echo "##################################################################"
     --output_dir "${REPORT_DIR}" \
     --split_manifest "${SPLIT_MANIFEST}" \
     --os_orientation_mode "corrected" \
+    --disc_cut_mode "cup" \
     --batch_size 8 \
     --device "cuda"
 

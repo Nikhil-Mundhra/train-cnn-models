@@ -276,7 +276,7 @@ def train(args):
         model_channels = (b, b * 2, b * 4, b * 8, b * 16)
 
     if getattr(args, 'arch', 'unet') == 'transunet':
-        print(f"[Architecture] Initializing TransUNetRNFLNet (base_channels={args.base_channels}, hidden_size={args.transunet_hidden_size}, layers={args.transunet_layers}, heads={args.transunet_heads}, laterality_emb={args.use_laterality_embedding})...")
+        print(f"[Architecture] Initializing TransUNetRNFLNet (base_channels={args.base_channels}, hidden_size={args.transunet_hidden_size}, layers={args.transunet_layers}, heads={args.transunet_heads}, laterality_emb={args.use_laterality_embedding}, use_stn={getattr(args, 'use_stn', False)})...")
         model = TransUNetRNFLNet(
             in_channels=args.context_slices,
             base_channels=args.base_channels,
@@ -285,6 +285,7 @@ def train(args):
             num_heads=args.transunet_heads,
             mlp_dim=args.transunet_mlp_dim,
             use_laterality_embedding=args.use_laterality_embedding,
+            use_stn=getattr(args, 'use_stn', False),
         ).to(device)
     elif getattr(args, 'use_stn', False):
         print(f"[Architecture] Initializing CanonicalVolumetricRNFLNet with STN (base_channels={args.base_channels}, channels={model_channels}, res_units={args.num_res_units}, laterality_emb={args.use_laterality_embedding})...")

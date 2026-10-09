@@ -85,10 +85,11 @@ export KMP_DUPLICATE_LIB_OK=TRUE
 2. **Standardized Eye Orientation**: Anatomically normalizes left eyes (OS) by horizontal flipping, ensuring nasal and temporal bundles are uniformly oriented for the neural network.
 3. **Multi-Task Dense + Boundary Learning**: Combines pixel-level volumetric segmentation (for 3D mesh reconstruction in Slicer) with direct continuous boundary regression in microns.
 4. **Topological Surface Ordering**: Enforces $\text{ReLU}(\hat{y}_{\text{ILM}} - \hat{y}_{\text{NFL}})$ penalty, mathematically preventing the inner retinal surface from crossing below the outer boundary.
-5. **TransUNet Hybrid CNN-Transformer Variant (`transunet.py`)**:
-   - Combines a multi-scale CNN stem (capturing high-frequency retinal boundary edges at $1/1$, $1/2$, $1/4$, $1/8$ resolutions) with a Vision Transformer (ViT) bottleneck operating at $1/16$ grid scale ($48 \times 20 = 960$ tokens for $768 \times 320$ B-scans).
-   - Models long-range retinal arcade and peripapillary dependencies across vessel shadows and optic cup boundaries.
-   - Restores sub-millimeter axial resolution through a Cascaded Upsampler (CUP) decoder with early CNN skip connections, coupled to our continuous 1D boundary regression heads.
+5. **Anisotropic TransUNet Hybrid Architecture (`transunet.py`)**:
+   - **Anisotropic Axial-Preserving Tokenization**: Decouples axial ($Z$) vs. lateral ($X$) downsampling, preserving 96–192 depth rows (bin size $\sim 12.5\,\mu\text{m}$ vs. $50\,\mu\text{m}$ in naive ViTs). Prevents blurring of the thin sub-millimeter RNFL-GCL interface.
+   - **Multi-Scale Boundary Injection**: Direct lateral skip connections from the high-resolution CNN stem ($1/1$ scale) feed directly into the continuous 1D boundary regression heads, ensuring physical voxel edge alignment.
+   - **Constrained Spatial Transformer (STN)**: Pre-aligns variable patient tilt ($\theta, t_y$) to a horizontal coordinate frame prior to self-attention tokenization, eliminating diagonal grid artifacts.
+   - **Cascaded Upsampler (CUP) Decoder**: Progressively restores spatial dimensions through dynamic bilinear interpolation and skip concatenation.
 
 ---
 

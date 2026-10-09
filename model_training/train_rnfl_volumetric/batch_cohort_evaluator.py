@@ -388,6 +388,7 @@ class VolumetricRNFLPredictor:
                 num_heads=num_heads,
                 mlp_dim=mlp_dim,
                 use_laterality_embedding=use_laterality_embedding,
+                use_stn=use_stn,
             ).to(device)
         elif use_stn:
             model = CanonicalVolumetricRNFLNet(

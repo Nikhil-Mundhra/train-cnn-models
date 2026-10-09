@@ -73,6 +73,7 @@ export OMP_NUM_THREADS=4
     --num_workers 4 \
     --precision fp16 \
     --enable_orthogonal \
+    --use_stn \
     --device cuda \
     --checkpoint_dir "${CHECKPOINT_DIR}" \
     --log_interval 50
