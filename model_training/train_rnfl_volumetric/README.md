@@ -215,6 +215,10 @@ Training runs directly on the NYUAD Jubail HPC cluster using SLURM, NVIDIA GPU a
 * **Data Storage (`/scratch/`)**: Full 23-subject cohort (46 paired volumes) at `/scratch/nm4358/deidentified/`. Output checkpoints saved to `/scratch/nm4358/checkpoints/`.
 * **Repository Location**: `~/train-cnn-models` (code resides in `/home`, fast I/O data resides on `/scratch`).
 * **Partition & Resources**: `#SBATCH -p nvidia` with `--gres=gpu:a100:1` (or `--gres=gpu:1`), `-c 8` CPU cores, and `--mem=32G`.
+* **V100 (32GB VRAM) Optimal Compute Satiation**:
+  - Jubail compute nodes `dn[001-010]` feature `Tesla V100-SXM2-32GB` with 32 GB HBM2 memory.
+  - At `--batch_size 2`, 2.5D models use only **~2.0 GB VRAM (<7% memory capacity)**, causing GPU utilization to sit around ~89–90% due to gradient accumulation synchronization pauses.
+  - **Standard for V100 Runs**: Use **`--batch_size 8`** with **`--accum_steps 1`** per GPU. Peak VRAM footprint is $\approx 7.2\,\text{GB}$, leaving $>24\,\text{GB}$ safety buffer while saturating Tensor Cores continuously to achieve **95%–98% active GPU utilization**.
 
 ### Step 1: Transfer Dataset to Jubail Scratch (Direct Cloud-to-Cluster Streaming)
 Do **not** download unhydrated files to your local Mac SSD via Box Drive, as this can exhaust local disk cache. Instead, stream directly in-memory from Box API to Jubail SFTP using `rclone` (or the helper script):
