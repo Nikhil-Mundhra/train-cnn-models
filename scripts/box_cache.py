@@ -30,21 +30,35 @@ def status(path: str) -> None:
 
 def materialize(path: str) -> None:
     if not os.path.exists(path):
-        print(f"Error: File does not exist: {path}", file=sys.stderr)
+        print(f"Error: Path does not exist: {path}", file=sys.stderr)
         sys.exit(1)
-    print(f"[BoxCache] Hydrating {os.path.basename(path)}...")
-    with open(path, "rb") as f:
-        while chunk := f.read(4 * 1024 * 1024):
-            pass
-    st = os.stat(path)
-    print(f"[BoxCache] Hydration complete! Resident blocks: {st.st_blocks} ({st.st_blocks * 512 / (1024*1024):.2f} MB)")
+    if os.path.isdir(path):
+        print(f"[BoxCache] Recursively hydrating directory: {path}...")
+        total_hydrated = 0
+        for root, _, files in os.walk(path):
+            for file in files:
+                fpath = os.path.join(root, file)
+                if not file.startswith('.'):
+                    with open(fpath, "rb") as f:
+                        while chunk := f.read(4 * 1024 * 1024):
+                            pass
+                    total_hydrated += 1
+        print(f"[BoxCache] Hydrated {total_hydrated} files in {os.path.basename(path)}.")
+    else:
+        print(f"[BoxCache] Hydrating {os.path.basename(path)}...")
+        with open(path, "rb") as f:
+            while chunk := f.read(4 * 1024 * 1024):
+                pass
+        st = os.stat(path)
+        print(f"[BoxCache] Hydration complete! Resident blocks: {st.st_blocks} ({st.st_blocks * 512 / (1024*1024):.2f} MB)")
 
 def evict(path: str) -> None:
     if not os.path.exists(path):
-        print(f"Error: File does not exist: {path}", file=sys.stderr)
+        print(f"Error: Path does not exist: {path}", file=sys.stderr)
         sys.exit(1)
     abs_path = os.path.abspath(path)
-    # Use macOS Foundation FileManager evictUbiquitousItem
+    target_type = "directory" if os.path.isdir(abs_path) else "file"
+    print(f"[BoxCache] Evicting {target_type}: {os.path.basename(abs_path)}...")
     swift_script = f"""import Foundation
 let url = URL(fileURLWithPath: "{abs_path}")
 do {{
@@ -58,7 +72,7 @@ do {{
     res = subprocess.run(["swift", "-"], input=swift_script, text=True, capture_output=True)
     if res.returncode == 0:
         st = os.stat(path)
-        print(f"[BoxCache] Eviction complete! File reverted to dataless (Blocks: {st.st_blocks})")
+        print(f"[BoxCache] Eviction complete! Reverted to dataless cloud placeholder (Blocks: {st.st_blocks})")
     else:
         print(f"[BoxCache] Eviction failed: {res.stderr.strip()}", file=sys.stderr)
         sys.exit(1)
