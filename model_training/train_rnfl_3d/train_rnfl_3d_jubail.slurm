@@ -70,9 +70,6 @@ RESUME_FLAG=""
 if [ -n "$1" ] && [ -f "$1" ]; then
     RESUME_FLAG="--resume $1"
     echo "[Resume] Resuming training from: $1"
-elif [ -f "${SCRATCH_DIR}/checkpoints/rnfl_3d_18563530/latest_rnfl_3d_net.pt" ]; then
-    RESUME_FLAG="--resume ${SCRATCH_DIR}/checkpoints/rnfl_3d_18563530/latest_rnfl_3d_net.pt"
-    echo "[Resume] Auto-detected previous checkpoint: ${SCRATCH_DIR}/checkpoints/rnfl_3d_18563530/latest_rnfl_3d_net.pt"
 fi
 
 echo "Training Manifest:   ${TRAIN_MANIFEST}"
