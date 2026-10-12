@@ -41,33 +41,116 @@ from dataset_3d import (
 from evaluation_metrics import compute_volumetric_metrics
 
 
-class DiceBCELoss(nn.Module):
-    """Combined Binary Cross Entropy and Soft-Dice Loss for 3D binary masks."""
+AXIAL_UM = 3.12367  # Axial physical resolution per pixel row (Solix OCT)
 
-    def __init__(self, bce_weight: float = 1.0, dice_weight: float = 1.0, eps: float = 1e-5):
+
+class VolumetricRNFL3DLoss(nn.Module):
+    """Combined Multi-Task Loss for Volumetric 3D RNFL Segmentation:
+
+    - Dense 3D Voxel Segmentation: Combined BCE + Soft-Dice on volumetric mask
+    - Continuous Surface Depth: Smooth L1 (Huber) loss in microns on ILM and NFL surfaces
+    - Optic Cup / Absence Classification: BCE on cup logits
+    - Topological Ordering: Penalizes inverted ILM crossing deeper than NFL
+    - Column Thickness Consistency: Vertical integral of voxel probabilities vs surface thickness
+    """
+
+    def __init__(
+        self,
+        weight_dice: float = 1.0,
+        weight_bce: float = 1.0,
+        weight_boundary: float = 0.4,
+        weight_cup: float = 0.5,
+        weight_topo: float = 0.1,
+        weight_thickness: float = 0.3,
+        axial_um: float = AXIAL_UM,
+        eps: float = 1e-5,
+    ):
         super().__init__()
-        self.bce_weight = bce_weight
-        self.dice_weight = dice_weight
+        self.weight_dice = weight_dice
+        self.weight_bce = weight_bce
+        self.weight_boundary = weight_boundary
+        self.weight_cup = weight_cup
+        self.weight_topo = weight_topo
+        self.weight_thickness = weight_thickness
+        self.axial_um = axial_um
         self.eps = eps
+        self.smooth_l1 = nn.SmoothL1Loss(reduction="none")
 
     def forward(
-        self, logits: torch.Tensor, targets: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        bce = F.binary_cross_entropy_with_logits(logits, targets)
-        probs = torch.sigmoid(logits)
-        # Sum over spatial dimensions (D, H, W)
-        intersection = (probs * targets).sum(dim=(2, 3, 4))
-        cardinality = probs.sum(dim=(2, 3, 4)) + targets.sum(dim=(2, 3, 4))
+        self, preds: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]
+    ) -> Tuple[torch.Tensor, Dict[str, float]]:
+        mask_logits = preds["mask_logits"]
+        target_mask = batch["mask"]
+
+        # 1. Dense 3D Voxel Segmentation Loss
+        bce = F.binary_cross_entropy_with_logits(mask_logits, target_mask)
+        probs = torch.sigmoid(mask_logits)
+        intersection = (probs * target_mask).sum(dim=(2, 3, 4))
+        cardinality = probs.sum(dim=(2, 3, 4)) + target_mask.sum(dim=(2, 3, 4))
         dice = (2.0 * intersection + self.eps) / (cardinality + self.eps)
         dice_loss = 1.0 - dice.mean()
-        total_loss = self.bce_weight * bce + self.dice_weight * dice_loss
-        return total_loss, bce, dice_loss, dice.mean()
+        loss_seg = self.weight_dice * dice_loss + self.weight_bce * bce
+
+        # 2. Surface Boundary Regression Losses (in micrometres)
+        target_ilm = batch["ilm_surface"]  # (B, slow_z, fast_x)
+        target_nfl = batch["nfl_surface"]  # (B, slow_z, fast_x)
+        ilm_valid = batch.get("ilm_valid", target_ilm > 0).float()
+        nfl_valid = batch.get("nfl_valid", target_nfl > 0).float()
+        cup_absent = batch.get("nfl_absent", 1.0 - nfl_valid).float()
+
+        ilm_pred = preds["ilm_pred"]
+        nfl_pred = preds["nfl_pred"]
+
+        ilm_err = self.smooth_l1(ilm_pred, target_ilm) * self.axial_um
+        loss_ilm = (ilm_err * ilm_valid).sum() / (ilm_valid.sum() + self.eps)
+
+        nfl_err = self.smooth_l1(nfl_pred, target_nfl) * self.axial_um
+        tissue_mask = 1.0 - cup_absent
+        loss_nfl = (nfl_err * tissue_mask).sum() / (tissue_mask.sum() + self.eps)
+
+        loss_boundary = loss_ilm + loss_nfl
+
+        # 3. Optic Cup / Absence Loss
+        cup_logits = preds["cup_logits"]
+        loss_cup = F.binary_cross_entropy_with_logits(cup_logits, cup_absent)
+
+        # 4. Topological Ordering Constraint: ILM must be above/equal to NFL
+        topo_violation = F.relu(ilm_pred - nfl_pred) * tissue_mask
+        loss_topo = topo_violation.sum() / (tissue_mask.sum() + self.eps)
+
+        # 5. Column-Thickness Consistency Loss
+        loss_thick = torch.tensor(0.0, device=mask_logits.device)
+        if self.weight_thickness > 0 and "column_thickness" in preds:
+            gt_thickness = F.relu(target_nfl - target_ilm) * tissue_mask
+            thick_err = self.smooth_l1(preds["column_thickness"], gt_thickness) * self.axial_um
+            loss_thick = (thick_err * tissue_mask).sum() / (tissue_mask.sum() + self.eps)
+
+        total_loss = (
+            loss_seg
+            + self.weight_boundary * loss_boundary
+            + self.weight_cup * loss_cup
+            + self.weight_topo * loss_topo
+            + self.weight_thickness * loss_thick
+        )
+
+        metrics = {
+            "loss": total_loss.item(),
+            "dice": dice.mean().item(),
+            "bce": bce.item(),
+            "dice_loss": dice_loss.item(),
+            "loss_ilm": loss_ilm.item(),
+            "loss_nfl": loss_nfl.item(),
+            "loss_cup": loss_cup.item(),
+            "loss_topo": loss_topo.item(),
+            "loss_thick": loss_thick.item(),
+        }
+        return total_loss, metrics
 
 
 def evaluate_validation_patches(
     model: nn.Module,
     val_loader: DataLoader,
-    criterion: DiceBCELoss,
+    criterion: VolumetricRNFL3DLoss,
     device: str,
     autocast_device: str,
     amp_dtype: torch.dtype,
@@ -75,36 +158,40 @@ def evaluate_validation_patches(
 ) -> Dict[str, float]:
     """Fast validation across sampled 3D patches."""
     model.eval()
-    total_loss = 0.0
-    total_bce = 0.0
-    total_dice_loss = 0.0
-    total_dice = 0.0
+    total_metrics = {
+        "loss": 0.0,
+        "dice": 0.0,
+        "bce": 0.0,
+        "dice_loss": 0.0,
+        "loss_ilm": 0.0,
+        "loss_nfl": 0.0,
+        "loss_cup": 0.0,
+        "loss_topo": 0.0,
+        "loss_thick": 0.0,
+    }
     num_batches = 0
 
     with torch.no_grad():
         for batch in val_loader:
-            images = batch["image"].to(device, non_blocking=True)
-            masks = batch["mask"].to(device, non_blocking=True)
+            batch_device = {
+                k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v
+                for k, v in batch.items()
+            }
+            images = batch_device["image"]
 
             with torch.autocast(device_type=autocast_device, dtype=amp_dtype, enabled=use_amp):
                 preds = model(images)
-                loss, bce, dice_loss, dice = criterion(preds["mask_logits"], masks)
+                loss, metrics = criterion(preds, batch_device)
 
-            total_loss += loss.item()
-            total_bce += bce.item()
-            total_dice_loss += dice_loss.item()
-            total_dice += dice.item()
+            for k in total_metrics:
+                if k in metrics:
+                    total_metrics[k] += metrics[k]
             num_batches += 1
 
     if num_batches == 0:
-        return {"loss": 0.0, "bce": 0.0, "dice_loss": 0.0, "dice": 0.0}
+        return total_metrics
 
-    return {
-        "loss": total_loss / num_batches,
-        "bce": total_bce / num_batches,
-        "dice_loss": total_dice_loss / num_batches,
-        "dice": total_dice / num_batches,
-    }
+    return {k: v / num_batches for k, v in total_metrics.items()}
 
 
 def evaluate_whole_volumes(
@@ -255,7 +342,14 @@ def train(args):
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"[Model] AnisotropicRNFLUNet3D initialized with {total_params:,} trainable parameters")
 
-    criterion = DiceBCELoss(bce_weight=1.0, dice_weight=1.0)
+    criterion = VolumetricRNFL3DLoss(
+        weight_dice=args.weight_dice,
+        weight_bce=args.weight_bce,
+        weight_boundary=args.weight_boundary,
+        weight_cup=args.weight_cup,
+        weight_topo=args.weight_topo,
+        weight_thickness=args.weight_thickness,
+    )
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
 
@@ -269,11 +363,17 @@ def train(args):
             ckpt = torch.load(args.resume, map_location=device, weights_only=False)
         except TypeError:
             ckpt = torch.load(args.resume, map_location=device)
-        model.load_state_dict(ckpt["model_state"])
+        model.load_state_dict(ckpt["model_state"], strict=False)
         if "optimizer_state" in ckpt:
-            optimizer.load_state_dict(ckpt["optimizer_state"])
+            try:
+                optimizer.load_state_dict(ckpt["optimizer_state"])
+            except Exception as e:
+                print(f"[Warning] Could not load optimizer state: {e}")
         if "scheduler_state" in ckpt:
-            scheduler.load_state_dict(ckpt["scheduler_state"])
+            try:
+                scheduler.load_state_dict(ckpt["scheduler_state"])
+            except Exception as e:
+                print(f"[Warning] Could not load scheduler state: {e}")
         start_epoch = ckpt.get("epoch", 0) + 1
         best_val_dice = ckpt.get("best_val_dice", -1.0)
         history = ckpt.get("history", [])
@@ -287,19 +387,23 @@ def train(args):
         epoch_start_time = time.time()
         model.train()
         running_loss = 0.0
-        running_bce = 0.0
-        running_dice_loss = 0.0
         running_dice = 0.0
+        running_ilm = 0.0
+        running_nfl = 0.0
+        running_cup = 0.0
         optimizer.zero_grad()
 
         num_steps = len(train_loader)
         for step, batch in enumerate(train_loader):
-            images = batch["image"].to(device, non_blocking=True)
-            masks = batch["mask"].to(device, non_blocking=True)
+            batch_device = {
+                k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v
+                for k, v in batch.items()
+            }
+            images = batch_device["image"]
 
             with torch.autocast(device_type=autocast_device, dtype=amp_dtype, enabled=use_amp):
                 preds = model(images)
-                loss, bce, dice_loss, dice = criterion(preds["mask_logits"], masks)
+                loss, metrics = criterion(preds, batch_device)
                 loss_scaled = loss / args.grad_accum_steps
 
             if scaler.is_enabled():
@@ -307,10 +411,11 @@ def train(args):
             else:
                 loss_scaled.backward()
 
-            running_loss += loss.item()
-            running_bce += bce.item()
-            running_dice_loss += dice_loss.item()
-            running_dice += dice.item()
+            running_loss += metrics["loss"]
+            running_dice += metrics["dice"]
+            running_ilm += metrics["loss_ilm"]
+            running_nfl += metrics["loss_nfl"]
+            running_cup += metrics["loss_cup"]
 
             if (step + 1) % args.grad_accum_steps == 0 or (step + 1) == num_steps:
                 if scaler.is_enabled():
@@ -326,6 +431,9 @@ def train(args):
             if (step + 1) % args.log_interval == 0 or (step + 1) == num_steps:
                 curr_loss = running_loss / (step + 1)
                 curr_dice = running_dice / (step + 1)
+                curr_ilm = running_ilm / (step + 1)
+                curr_nfl = running_nfl / (step + 1)
+                curr_cup = running_cup / (step + 1)
                 lr = optimizer.param_groups[0]["lr"]
                 mem_str = ""
                 if device == "cuda":
@@ -334,7 +442,7 @@ def train(args):
                     mem_str = f" | GPU Mem: {mem_alloc:.1f}/{mem_res:.1f} GB"
                 print(
                     f"Epoch [{epoch:02d}/{args.epochs:02d}] Step [{step + 1:04d}/{num_steps:04d}] "
-                    f"Loss: {curr_loss:.4f} | Dice: {curr_dice:.4f} | LR: {lr:.2e}{mem_str}",
+                    f"Loss: {curr_loss:.4f} | Dice: {curr_dice:.4f} | ILM: {curr_ilm:.1f}µm | NFL: {curr_nfl:.1f}µm | Cup: {curr_cup:.3f} | LR: {lr:.2e}{mem_str}",
                     end="\r",
                     flush=True,
                 )
@@ -553,6 +661,48 @@ def build_arg_parser():
         type=int,
         default=42,
         help="Random seed",
+    )
+    parser.add_argument(
+        "--peri_prob",
+        type=float,
+        default=0.75,
+        help="Probability of sampling patch centered on optic disc",
+    )
+    parser.add_argument(
+        "--weight_dice",
+        type=float,
+        default=1.0,
+        help="Weight for 3D soft-dice segmentation loss",
+    )
+    parser.add_argument(
+        "--weight_bce",
+        type=float,
+        default=1.0,
+        help="Weight for 3D voxel BCE loss",
+    )
+    parser.add_argument(
+        "--weight_boundary",
+        type=float,
+        default=0.4,
+        help="Weight for continuous ILM and NFL surface MABE loss",
+    )
+    parser.add_argument(
+        "--weight_cup",
+        type=float,
+        default=0.5,
+        help="Weight for cup absence BCE loss",
+    )
+    parser.add_argument(
+        "--weight_topo",
+        type=float,
+        default=0.1,
+        help="Weight for topological ordering penalty",
+    )
+    parser.add_argument(
+        "--weight_thickness",
+        type=float,
+        default=0.3,
+        help="Weight for column-thickness consistency loss",
     )
     return parser
 

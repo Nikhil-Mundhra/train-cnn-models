@@ -21,7 +21,14 @@ class TestDense3DModel(unittest.TestCase):
         image = torch.randn(1, 1, 8, 32, 8)
         output = model(image)
         self.assertEqual(output["mask_logits"].shape, image.shape)
-        self.assertNotIn("cup_logits", output)
+        self.assertIn("cup_logits", output)
+        self.assertEqual(output["cup_logits"].shape, (1, 8, 8))
+        self.assertIn("ilm_pred", output)
+        self.assertEqual(output["ilm_pred"].shape, (1, 8, 8))
+        self.assertIn("nfl_pred", output)
+        self.assertEqual(output["nfl_pred"].shape, (1, 8, 8))
+        self.assertIn("column_thickness", output)
+        self.assertEqual(output["column_thickness"].shape, (1, 8, 8))
 
 
 class TestPatchExtraction(unittest.TestCase):

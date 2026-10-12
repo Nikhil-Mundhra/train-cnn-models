@@ -12,29 +12,70 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from model_3d import AnisotropicRNFLUNet3D, AnisotropicUNetConfig
 from dataset_3d import build_ground_truth_mask, predict_whole_volume_mask
-from train_3d import DiceBCELoss
+from train_3d import VolumetricRNFL3DLoss
 
 
 class TestTrain3D(unittest.TestCase):
-    def test_dice_bce_loss_perfect_match(self):
-        criterion = DiceBCELoss(bce_weight=1.0, dice_weight=1.0)
+    def test_volumetric_loss_perfect_match(self):
+        criterion = VolumetricRNFL3DLoss()
         # Perfect match: logits high positive where mask is 1, large negative where mask is 0
-        mask = torch.zeros((1, 1, 16, 64, 16), dtype=torch.float32)
-        mask[:, :, 4:12, 20:40, 4:12] = 1.0
+        mask = torch.zeros((1, 1, 8, 64, 8), dtype=torch.float32)
+        mask[:, :, 2:6, 20:40, 2:6] = 1.0
         logits = (mask * 20.0) - 10.0
+        ilm_surface = torch.full((1, 8, 8), 20.0)
+        nfl_surface = torch.full((1, 8, 8), 40.0)
 
-        total_loss, bce, dice_loss, dice = criterion(logits, mask)
-        self.assertAlmostEqual(dice.item(), 1.0, places=2)
-        self.assertAlmostEqual(dice_loss.item(), 0.0, places=2)
-        self.assertLess(total_loss.item(), 0.1)
+        preds = {
+            "mask_logits": logits,
+            "ilm_pred": ilm_surface.clone(),
+            "nfl_pred": nfl_surface.clone(),
+            "cup_logits": torch.full((1, 8, 8), -10.0),
+            "column_thickness": torch.full((1, 8, 8), 20.0),
+        }
+        batch = {
+            "mask": mask,
+            "ilm_surface": ilm_surface,
+            "nfl_surface": nfl_surface,
+            "ilm_valid": torch.ones((1, 8, 8), dtype=torch.bool),
+            "nfl_valid": torch.ones((1, 8, 8), dtype=torch.bool),
+            "nfl_absent": torch.zeros((1, 8, 8), dtype=torch.bool),
+        }
 
-    def test_dice_bce_loss_gradients(self):
-        criterion = DiceBCELoss()
+        total_loss, metrics = criterion(preds, batch)
+        self.assertAlmostEqual(metrics["dice"], 1.0, places=2)
+        self.assertAlmostEqual(metrics["dice_loss"], 0.0, places=2)
+        self.assertLess(metrics["loss_ilm"], 0.1)
+        self.assertLess(metrics["loss_nfl"], 0.1)
+
+    def test_volumetric_loss_gradients(self):
+        criterion = VolumetricRNFL3DLoss()
         logits = torch.randn((1, 1, 8, 32, 8), requires_grad=True)
-        mask = (torch.rand((1, 1, 8, 32, 8)) > 0.5).float()
-        total_loss, _, _, _ = criterion(logits, mask)
+        ilm_pred = torch.randn((1, 8, 8), requires_grad=True)
+        nfl_pred = torch.randn((1, 8, 8), requires_grad=True)
+        cup_logits = torch.randn((1, 8, 8), requires_grad=True)
+        column_thick = torch.randn((1, 8, 8), requires_grad=True)
+
+        preds = {
+            "mask_logits": logits,
+            "ilm_pred": ilm_pred,
+            "nfl_pred": nfl_pred,
+            "cup_logits": cup_logits,
+            "column_thickness": column_thick,
+        }
+        batch = {
+            "mask": (torch.rand((1, 1, 8, 32, 8)) > 0.5).float(),
+            "ilm_surface": torch.rand((1, 8, 8)) * 10,
+            "nfl_surface": torch.rand((1, 8, 8)) * 20,
+            "ilm_valid": torch.ones((1, 8, 8), dtype=torch.bool),
+            "nfl_valid": torch.ones((1, 8, 8), dtype=torch.bool),
+            "nfl_absent": torch.zeros((1, 8, 8), dtype=torch.bool),
+        }
+        total_loss, _ = criterion(preds, batch)
         total_loss.backward()
         self.assertIsNotNone(logits.grad)
+        self.assertIsNotNone(ilm_pred.grad)
+        self.assertIsNotNone(nfl_pred.grad)
+        self.assertIsNotNone(cup_logits.grad)
         self.assertTrue(torch.isfinite(logits.grad).all())
 
     def test_model_3d_small_forward(self):
