@@ -279,9 +279,14 @@ def train(args):
         model_channels = (b, b * 2, b * 4, b * 8, b * 16)
 
     if getattr(args, 'arch', 'unet') == 'transunet':
-        print(f"[Architecture] Initializing TransUNetRNFLNet (base_channels={args.base_channels}, hidden_size={args.transunet_hidden_size}, layers={args.transunet_layers}, heads={args.transunet_heads}, laterality_emb={args.use_laterality_embedding}, use_stn={getattr(args, 'use_stn', False)})...")
+        if isinstance(args.transunet_stage_channels, str):
+            transunet_stages = tuple(int(c.strip()) for c in args.transunet_stage_channels.split(','))
+        else:
+            transunet_stages = tuple(args.transunet_stage_channels)
+        print(f"[Architecture] Initializing TransUNetRNFLNet (stage_channels={transunet_stages}, base_channels={args.base_channels}, hidden_size={args.transunet_hidden_size}, layers={args.transunet_layers}, heads={args.transunet_heads}, mlp_dim={args.transunet_mlp_dim}, laterality_emb={args.use_laterality_embedding}, use_stn={getattr(args, 'use_stn', False)})...")
         model = TransUNetRNFLNet(
             in_channels=args.context_slices,
+            stage_channels=transunet_stages,
             base_channels=args.base_channels,
             hidden_size=args.transunet_hidden_size,
             num_layers=args.transunet_layers,
@@ -577,6 +582,8 @@ if __name__ == "__main__":
     parser.add_argument("--use_laterality_embedding", action="store_true", default=False, help="Enable explicit OD/OS conditioning embedding")
     parser.add_argument("--arch", type=str, default="unet", choices=["unet", "transunet"],
                         help="Network architecture: 'unet' (standard VolumetricRNFLNet) or 'transunet' (hybrid CNN-Transformer TransUNetRNFLNet)")
+    parser.add_argument("--transunet_stage_channels", type=str, default="32,64,128",
+                        help="Comma-separated CNN encoder stage channels for TransUNet (default: '32,64,128'; for 20M Balanced Hybrid: '64,128,256')")
     parser.add_argument("--transunet_hidden_size", type=int, default=256, help="Transformer embedding dimension for TransUNet")
     parser.add_argument("--transunet_layers", type=int, default=6, help="Number of Transformer encoder layers for TransUNet")
     parser.add_argument("--transunet_heads", type=int, default=8, help="Number of attention heads for TransUNet")

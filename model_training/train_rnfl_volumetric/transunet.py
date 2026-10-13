@@ -18,6 +18,7 @@ Architectural Innovations & RNFL Specializations:
 """
 
 import math
+from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -127,6 +128,7 @@ class AnisotropicTransUNetEncoder(nn.Module):
     def __init__(
         self,
         in_channels: int = 5,
+        stage_channels: tuple = (32, 64, 128),
         hidden_size: int = 256,
         num_layers: int = 6,
         num_heads: int = 8,
@@ -136,26 +138,29 @@ class AnisotropicTransUNetEncoder(nn.Module):
         width: int = 320,
     ):
         super().__init__()
+        self.stage_channels = tuple(stage_channels)
         self.hidden_size = hidden_size
         self.axial_height = axial_height
         self.width = width
 
+        s1, s2, s3 = self.stage_channels
+
         # Stage 1: (H, W) -> (H/2, W/2) = (384, 160)
-        self.stage1 = ConvBlock(in_channels, 32)
+        self.stage1 = ConvBlock(in_channels, s1)
         self.pool1 = nn.MaxPool2d((2, 2))
 
         # Stage 2: (H/2, W/2) -> (H/4, W/4) = (192, 80)
-        self.stage2 = ConvBlock(32, 64)
+        self.stage2 = ConvBlock(s1, s2)
         self.pool2 = nn.MaxPool2d((2, 2))
 
         # Stage 3: (192, 80) -> Lateral-only downsampling (1, 2) = (192, 40)
         # Keeps axial depth at 192 rows!
-        self.stage3 = ConvBlock(64, 128)
+        self.stage3 = ConvBlock(s2, s3)
         self.pool3 = nn.MaxPool2d((1, 2))
 
         # Stage 4: (192, 40) -> Conv stride (2, 2) = (96, 20) token grid
         self.stage4 = nn.Sequential(
-            nn.Conv2d(128, hidden_size, kernel_size=3, stride=(2, 2), padding=1, bias=False),
+            nn.Conv2d(s3, hidden_size, kernel_size=3, stride=(2, 2), padding=1, bias=False),
             nn.BatchNorm2d(hidden_size),
             nn.ReLU(inplace=True),
         )
@@ -225,6 +230,7 @@ class TransUNetRNFLNet(nn.Module):
     def __init__(
         self,
         in_channels: int = 5,
+        stage_channels: tuple = (32, 64, 128),
         base_channels: int = 16,
         hidden_size: int = 256,
         num_layers: int = 6,
@@ -239,8 +245,12 @@ class TransUNetRNFLNet(nn.Module):
         super().__init__()
         self.axial_height = axial_height
         self.width = width
+        self.stage_channels = tuple(stage_channels)
+        self.base_channels = base_channels
         self.use_laterality_embedding = use_laterality_embedding
         self.use_stn = use_stn
+
+        s1, s2, s3 = self.stage_channels
 
         if use_stn and ConstrainedSpatialTransformer is not None:
             self.stn = ConstrainedSpatialTransformer(
@@ -255,6 +265,7 @@ class TransUNetRNFLNet(nn.Module):
 
         self.encoder = AnisotropicTransUNetEncoder(
             in_channels=in_channels,
+            stage_channels=self.stage_channels,
             hidden_size=hidden_size,
             num_layers=num_layers,
             num_heads=num_heads,
@@ -264,14 +275,14 @@ class TransUNetRNFLNet(nn.Module):
         )
 
         # Cascaded Upsampler Decoder (CUP)
-        # d1: (96, 20) -> (192, 40) with skip p3 (128 channels)
-        self.cup1 = DecoderCupBlock(in_channels=hidden_size, skip_channels=128, out_channels=128)
-        # d2: (192, 40) -> (192, 80) with skip p2 (64 channels)
-        self.cup2 = DecoderCupBlock(in_channels=128, skip_channels=64, out_channels=64)
-        # d3: (192, 80) -> (384, 160) with skip p1 (32 channels)
-        self.cup3 = DecoderCupBlock(in_channels=64, skip_channels=32, out_channels=32)
-        # d4: (384, 160) -> (768, 320) with skip f1 (32 channels)
-        self.cup4 = DecoderCupBlock(in_channels=32, skip_channels=32, out_channels=base_channels)
+        # d1: (96, 20) -> (192, 40) with skip p3 (s3 channels)
+        self.cup1 = DecoderCupBlock(in_channels=hidden_size, skip_channels=s3, out_channels=s3)
+        # d2: (192, 40) -> (192, 80) with skip p2 (s2 channels)
+        self.cup2 = DecoderCupBlock(in_channels=s3, skip_channels=s2, out_channels=s2)
+        # d3: (192, 80) -> (384, 160) with skip p1 (s1 channels)
+        self.cup3 = DecoderCupBlock(in_channels=s2, skip_channels=s1, out_channels=s1)
+        # d4: (384, 160) -> (768, 320) with skip f1 (s1 channels)
+        self.cup4 = DecoderCupBlock(in_channels=s1, skip_channels=s1, out_channels=base_channels)
 
         if use_laterality_embedding:
             self.eye_emb = nn.Embedding(2, base_channels)
@@ -279,7 +290,7 @@ class TransUNetRNFLNet(nn.Module):
         self.mask_head = nn.Conv2d(base_channels, 1, kernel_size=1)
         self.boundary_head = MultiScaleBoundaryHead(
             in_channels_dec=base_channels,
-            in_channels_stem=32,
+            in_channels_stem=s1,
             width=width,
         )
 
@@ -340,3 +351,73 @@ class TransUNetRNFLNet(nn.Module):
             out['mat_inv'] = mat_inv
 
         return out
+
+    @classmethod
+    def from_checkpoint(cls, checkpoint_path_or_dict, device="cpu"):
+        """
+        Instantiates TransUNetRNFLNet with configuration automatically inferred
+        from checkpoint arguments or weight tensor shapes, ensuring full backwards
+        compatibility across parameterization regimes (5.1M and 20M).
+        """
+        if isinstance(checkpoint_path_or_dict, (str, Path)):
+            ckpt = torch.load(checkpoint_path_or_dict, map_location=device, weights_only=False)
+        else:
+            ckpt = checkpoint_path_or_dict
+
+        state_dict = ckpt.get('model_state_dict', ckpt)
+        ckpt_args = ckpt.get('args', {})
+
+        base_channels = ckpt_args.get('base_channels')
+        if base_channels is None:
+            if 'mask_head.weight' in state_dict:
+                base_channels = state_dict['mask_head.weight'].shape[1]
+            else:
+                base_channels = 16
+
+        stage_channels = ckpt_args.get('transunet_stage_channels')
+        if stage_channels is None:
+            if 'encoder.stage1.conv.0.weight' in state_dict:
+                s1 = state_dict['encoder.stage1.conv.0.weight'].shape[0]
+                s2 = state_dict['encoder.stage2.conv.0.weight'].shape[0]
+                s3 = state_dict['encoder.stage3.conv.0.weight'].shape[0]
+                stage_channels = (s1, s2, s3)
+            else:
+                stage_channels = (32, 64, 128)
+        elif isinstance(stage_channels, str):
+            stage_channels = tuple(int(c.strip()) for c in stage_channels.split(','))
+
+        hidden_size = ckpt_args.get('transunet_hidden_size')
+        if hidden_size is None:
+            if 'encoder.stage4.0.weight' in state_dict:
+                hidden_size = state_dict['encoder.stage4.0.weight'].shape[0]
+            else:
+                hidden_size = 256
+
+        num_layers = ckpt_args.get('transunet_layers')
+        if num_layers is None:
+            layer_indices = [
+                int(k.split('.')[3])
+                for k in state_dict
+                if k.startswith('encoder.transformer.layers.') and k.split('.')[3].isdigit()
+            ]
+            num_layers = max(layer_indices) + 1 if layer_indices else 6
+
+        num_heads = ckpt_args.get('transunet_heads', 8)
+        mlp_dim = ckpt_args.get('transunet_mlp_dim', 512)
+        use_laterality_embedding = ckpt_args.get('use_laterality_embedding', False) or ('eye_emb.weight' in state_dict)
+        use_stn = ckpt_args.get('use_stn', False) or any(k.startswith('stn.') for k in state_dict)
+
+        model = cls(
+            in_channels=ckpt_args.get('context_slices', 5),
+            stage_channels=stage_channels,
+            base_channels=base_channels,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            num_heads=num_heads,
+            mlp_dim=mlp_dim,
+            use_laterality_embedding=use_laterality_embedding,
+            use_stn=use_stn,
+        )
+        model.load_state_dict(state_dict)
+        model.to(device)
+        return model

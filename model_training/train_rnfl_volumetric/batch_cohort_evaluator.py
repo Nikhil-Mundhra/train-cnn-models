@@ -376,12 +376,39 @@ class VolumetricRNFLPredictor:
         use_stn = ckpt_args.get('use_stn', False) or any(k.startswith('stn.') for k in state_dict)
         if is_transunet:
             from transunet import TransUNetRNFLNet
-            hidden_size = ckpt_args.get('transunet_hidden_size', 256)
-            num_layers = ckpt_args.get('transunet_layers', 6)
+            stage_channels = ckpt_args.get('transunet_stage_channels')
+            if stage_channels is None:
+                if 'encoder.stage1.conv.0.weight' in state_dict:
+                    s1 = state_dict['encoder.stage1.conv.0.weight'].shape[0]
+                    s2 = state_dict['encoder.stage2.conv.0.weight'].shape[0]
+                    s3 = state_dict['encoder.stage3.conv.0.weight'].shape[0]
+                    stage_channels = (s1, s2, s3)
+                else:
+                    stage_channels = (32, 64, 128)
+            elif isinstance(stage_channels, str):
+                stage_channels = tuple(int(c.strip()) for c in stage_channels.split(','))
+
+            hidden_size = ckpt_args.get('transunet_hidden_size')
+            if hidden_size is None:
+                if 'encoder.stage4.0.weight' in state_dict:
+                    hidden_size = state_dict['encoder.stage4.0.weight'].shape[0]
+                else:
+                    hidden_size = 256
+
+            num_layers = ckpt_args.get('transunet_layers')
+            if num_layers is None:
+                layer_indices = [
+                    int(k.split('.')[3])
+                    for k in state_dict
+                    if k.startswith('encoder.transformer.layers.') and k.split('.')[3].isdigit()
+                ]
+                num_layers = max(layer_indices) + 1 if layer_indices else 6
+
             num_heads = ckpt_args.get('transunet_heads', 8)
             mlp_dim = ckpt_args.get('transunet_mlp_dim', 512)
             model = TransUNetRNFLNet(
                 in_channels=5,
+                stage_channels=stage_channels,
                 base_channels=base_channels,
                 hidden_size=hidden_size,
                 num_layers=num_layers,

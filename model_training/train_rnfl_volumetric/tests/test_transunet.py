@@ -79,6 +79,48 @@ class TestTransUNet(unittest.TestCase):
         self.assertIsNotNone(x.grad)
         self.assertGreater(x.grad.norm().item(), 0.0)
 
+    def test_balanced_hybrid_20m_configuration(self):
+        """Verifies Balanced Hybrid 20M parameter scale (~19.97M params) and forward pass."""
+        model_20m = TransUNetRNFLNet(
+            in_channels=self.in_channels,
+            stage_channels=(64, 128, 256),
+            base_channels=32,
+            hidden_size=384,
+            num_layers=8,
+            num_heads=12,
+            mlp_dim=1536,
+            axial_height=self.H,
+            width=self.W,
+            use_laterality_embedding=True,
+            use_stn=True,
+        ).to(self.device)
+
+        total_params = sum(p.numel() for p in model_20m.parameters())
+        self.assertGreaterEqual(total_params, 19_500_000)
+        self.assertLessEqual(total_params, 20_500_000)
+
+        x = torch.randn(self.batch_size, self.in_channels, self.H, self.W, device=self.device)
+        eye_idx = torch.tensor([0, 1], device=self.device)
+        preds = model_20m(x, eye_idx=eye_idx)
+
+        self.assertEqual(preds["mask_logits"].shape, (self.batch_size, 1, self.H, self.W))
+        self.assertEqual(preds["ilm_pred"].shape, (self.batch_size, self.W))
+        self.assertEqual(preds["nfl_pred"].shape, (self.batch_size, self.W))
+        self.assertEqual(preds["cup_logits"].shape, (self.batch_size, self.W))
+
+    def test_from_checkpoint_backwards_compatibility(self):
+        """Verifies backwards compatibility with 5.1M checkpoints."""
+        ckpt_path = SCRIPT_DIR.parent / "checkpoints" / "rnfl_transunet_hybrid_18724310" / "best_volumetric_rnfl_net.pt"
+        if ckpt_path.is_file():
+            loaded_model = TransUNetRNFLNet.from_checkpoint(str(ckpt_path), device=self.device)
+            self.assertEqual(loaded_model.stage_channels, (32, 64, 128))
+            self.assertEqual(loaded_model.base_channels, 16)
+            self.assertEqual(loaded_model.encoder.hidden_size, 256)
+            self.assertEqual(len(loaded_model.encoder.transformer.layers), 6)
+            total = sum(p.numel() for p in loaded_model.parameters())
+            self.assertGreaterEqual(total, 5_000_000)
+            self.assertLessEqual(total, 5_300_000)
+
 
 if __name__ == "__main__":
     unittest.main()
