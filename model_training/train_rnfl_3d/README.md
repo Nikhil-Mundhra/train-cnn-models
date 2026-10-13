@@ -45,3 +45,21 @@ Evaluations adhere to [`evaluation_metrics.py`](evaluation_metrics.py) wrapping 
   - `hd_um`: Maximum Hausdorff Distance in micrometres.
   - `asd_um` / `msd`: Mean Surface Distance in micrometres.
   - `volume_similarity`: Bounded relative volume similarity $1 - \frac{|V_p - V_g|}{V_p + V_g}$.
+
+---
+
+## 5. Completed Benchmark Runs & Empirical Findings
+
+Two full 20-epoch runs exist on NYUAD Jubail HPC:
+
+| Run Job ID | Model Description | Heads | Train Epochs | Held-Out Dice | Held-Out MABE | Peripapillary Gain | Status |
+|:---:|:---|:---:|:---:|:---:|:---:|:---:|:---:|
+| **`18574378`** | Dense 3D U-Net Baseline | 1 Head (Voxel mask) | 20 | **0.9471** | **5.50 µm** | **+55.5%** | Pure Voxel Upper Bound |
+| **`18770720`** | Standardized Multi-Task 3D | 5 Heads (Boundary/Cup) | 20 | **0.8722** | **7.21 µm** | **+54.3%** | Standardized API Contract |
+
+**Key Finding**:
+Attaching continuous 1D physical-coordinate regression heads onto shared 3D convolutional decoder features created cross-objective gradient tension, driving boundary errors down to sub-pixel accuracy (ILM: 6.9 µm, NFL: 11.6 µm) while reducing voxel Dice from 0.9471 to 0.8722. In contrast, 2.5D Bi-Planar architectures harmonize both objectives without gradient interference (Dice: 0.9518, MABE: 4.71 µm).
+
+For the full architectural analysis and mathematical breakdown, see the technical specification:  
+[`OCT-Analyser-Capstone/docs/technical_specs/dense_3d_multitask_standardization_finding.md`](../../../OCT-Analyser-Capstone/docs/technical_specs/dense_3d_multitask_standardization_finding.md).
+
