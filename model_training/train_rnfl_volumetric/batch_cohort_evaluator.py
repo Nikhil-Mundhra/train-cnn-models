@@ -338,6 +338,10 @@ class VolumetricRNFLPredictor:
 
         self.use_amp = "mps" in str(device) or "cuda" in str(device)
         self.autocast_device = "mps" if "mps" in str(device) else ("cuda" if "cuda" in str(device) else "cpu")
+        if self.autocast_device == "cuda" and torch.cuda.is_available() and not torch.cuda.is_bf16_supported():
+            self.autocast_dtype = torch.float16
+        else:
+            self.autocast_dtype = torch.bfloat16
 
     @classmethod
     def from_checkpoint(
@@ -451,7 +455,7 @@ class VolumetricRNFLPredictor:
         if getattr(self.model, 'use_laterality_embedding', False) and eye is not None:
             eye_idx = torch.tensor([0 if eye.upper() == 'OD' else 1] * batch_tensor.size(0), dtype=torch.long, device=self.device)
         with torch.no_grad():
-            with torch.autocast(device_type=self.autocast_device, dtype=torch.bfloat16, enabled=self.use_amp):
+            with torch.autocast(device_type=self.autocast_device, dtype=self.autocast_dtype, enabled=self.use_amp):
                 if eye_idx is not None:
                     preds = self.model(batch_tensor, eye_idx=eye_idx)
                 else:
