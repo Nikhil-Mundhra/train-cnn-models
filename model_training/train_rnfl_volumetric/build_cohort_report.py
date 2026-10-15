@@ -216,7 +216,7 @@ def main():
             md_path=args.output_md
         )
         if not compiled:
-            raise RuntimeError(f"PDF report was not regenerated: {args.output_pdf}")
+            print(f"[Report Builder] WARNING: PDF report was not generated (PDF engine missing or failed): {args.output_pdf}")
 
 
 if __name__ == "__main__":
