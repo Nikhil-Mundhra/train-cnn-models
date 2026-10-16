@@ -356,14 +356,14 @@ def train(args):
 
         ckpt = torch.load(args.resume_checkpoint, map_location=device, weights_only=False)
         state_dict = ckpt.get('model_state_dict', ckpt)
-        if getattr(args, 'use_stn', False) and not any(k.startswith('backbone_net.') for k in state_dict):
+        if getattr(args, 'arch', 'unet') != 'transunet' and getattr(args, 'use_stn', False) and not any(k.startswith('backbone_net.') for k in state_dict):
             # Checkpoint from baseline model without STN: map keys to backbone_net
             adapted_dict = {f"backbone_net.{k}": v for k, v in state_dict.items()}
             missing, unexpected = model.load_state_dict(adapted_dict, strict=False)
             if rank == 0:
                 print(f"[Training] Loaded baseline weights into CanonicalVolumetricRNFLNet backbone. STN initialized to identity.")
 
-        elif not getattr(args, 'use_stn', False) and any(k.startswith('backbone_net.') for k in state_dict):
+        elif getattr(args, 'arch', 'unet') != 'transunet' and not getattr(args, 'use_stn', False) and any(k.startswith('backbone_net.') for k in state_dict):
             # Checkpoint from STN model into standard baseline: strip backbone_net. prefix
             adapted_dict = {k.replace('backbone_net.', ''): v for k, v in state_dict.items() if not k.startswith('stn.')}
             missing, unexpected = model.load_state_dict(adapted_dict, strict=False)
