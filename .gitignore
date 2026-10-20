@@ -66,4 +66,7 @@ frontend/.next
 scripts/hpc-nyuad.txt
 docs/cohort_reports/
 reports/
+# Pre-publication RNFL volumetric architectures & SLURM benchmarks (held private during double-blind review)
+model_training/train_rnfl_volumetric/
+
 
