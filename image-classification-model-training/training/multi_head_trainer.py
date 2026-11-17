@@ -19,7 +19,10 @@ import pandas as pd
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
+try:
+    from torch.utils.tensorboard import SummaryWriter
+except ImportError:
+    SummaryWriter = None
 from sklearn.metrics import f1_score, accuracy_score, recall_score, precision_score
 
 from training.trainer import EarlyStopping
@@ -68,7 +71,7 @@ class MultiHeadTrainer:
             tb_dir = Path(log_dir) / mode
         self.ckpt_dir.mkdir(parents=True, exist_ok=True)
         tb_dir.mkdir(parents=True, exist_ok=True)
-        self.writer = SummaryWriter(log_dir=str(tb_dir))
+        self.writer = SummaryWriter(log_dir=str(tb_dir)) if SummaryWriter is not None else None
 
         self._amp_enabled = (self.device.type in ["cuda", "mps"])
         self._amp_dtype = amp_dtype
@@ -294,7 +297,7 @@ class MultiHeadTrainer:
         self, fold_id: int, global_step: int, train_loss: float, val_loss: float, h2_f1: float, per_class_metrics: dict
     ) -> None:
         """Record epoch metrics and per-class F1 scores into TensorBoard."""
-        if not self.compute_manager.is_main_process:
+        if not self.compute_manager.is_main_process or self.writer is None:
             return
         self.writer.add_scalar(f"fold{fold_id}/loss/train", train_loss, global_step)
         self.writer.add_scalar(f"fold{fold_id}/loss/val", val_loss, global_step)

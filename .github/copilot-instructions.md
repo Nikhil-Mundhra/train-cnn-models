@@ -3,7 +3,7 @@
 
 Docmancer unifies the memory your coding agents already wrote on this machine into one local, offline index, and it indexes documentation you choose on the same engine. This skill is the docs side: it ingests local files, fetches public docs, indexes everything locally with SQLite FTS5, and returns compact context packs with source attribution, so coding agents spend tokens on code, not on rereading raw docs. To recall past decisions or project context instead, use `docmancer memory query`.
 
-Executable: `/Users/nikhilmundhra/.local/pipx/venvs/docmancer/bin/docmancer --config /Users/nikhilmundhra/.docmancer/docmancer.yaml`
+Executable: `docmancer` (e.g., `~/.local/pipx/venvs/docmancer/bin/docmancer --config ~/.docmancer/docmancer.yaml`)
 
 **All commands below use `docmancer` as shorthand for the full executable path above.**
 

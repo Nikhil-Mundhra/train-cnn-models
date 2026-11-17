@@ -13,6 +13,7 @@ This framework unifies **Hierarchical Retinal Layer & Lesion Segmentation** (U-N
 3. **Strict Hierarchical Conditioning:** Cascaded feature propagation enforces Level 2 (Pathology Category) conditioned on Level 1 (Normal/Abnormal) probabilities, preventing contradictory predictions.
 4. **Decoupled Decoder:** The segmentation decoder operates independently to predict retinal tissue boundaries without feeding back into classification, preventing catastrophic failure on unseen pathologies.
 5. **Medical Augmentation Constraints:** Enforces **Segmentation-Driven Cropping** (isolating retinal tissue while zeroing out background scanner artifacts) over destructive spatial crops (`RandomResizedCrop`).
+6. **2.5D Volumetric Context:** Extracts stacked adjacent B-scan slabs into a multi-channel 2D U-Net / ResNet backbone for anisotropic OCT volumes (axial pixel spacing $\Delta y \approx 3.124\,\mu\text{m}$ vs. lateral/inter-slice spacing $\Delta x \approx 18.75\,\mu\text{m}$, $\Delta z \approx 18.81\,\mu\text{m}$ in `Disc Cube` mode), providing multi-slice continuity without isotropic 3D memory overhead.
 
 ---
 
@@ -102,17 +103,17 @@ python3 train.py \
   --hf-repo username/oct-convnext-checkpoint
 ```
 
-For full CLI parameter documentation, see [CLI Reference](file:///Users/nikhilmundhra/Documents/Github/train-cnn-models/docs/CLI_REFERENCE.md).
+For full CLI parameter documentation, see [CLI Reference](docs/CLI_REFERENCE.md).
 
 ---
 
 ## Documentation Index
 
-- [CLI Reference](file:///Users/nikhilmundhra/Documents/Github/train-cnn-models/docs/CLI_REFERENCE.md): Complete parameter reference for `train.py`.
-- [Architecture Guide](file:///Users/nikhilmundhra/Documents/Github/train-cnn-models/docs/ARCHITECTURE.md): Network design, loss functions, and hierarchical features.
-- [Model Zoo](file:///Users/nikhilmundhra/Documents/Github/train-cnn-models/docs/MODEL_ZOO.md): Supported classification backbones and U-Net segmenters.
-- [Augmentation & Data Guide](file:///Users/nikhilmundhra/Documents/Github/train-cnn-models/docs/DATA_AND_AUGMENTATIONS.md): Medical augmentation rules, MONAI pipelines, and dataset configuration.
-- [Kaggle & Colab Guide](file:///Users/nikhilmundhra/Documents/Github/train-cnn-models/docs/KAGGLE_COLAB_GUIDE.md): Remote GPU execution, HuggingFace Hub sync, and multi-GPU DDP setup.
+- [CLI Reference](docs/CLI_REFERENCE.md): Complete parameter reference for `train.py`.
+- [Architecture Guide](docs/ARCHITECTURE.md): Network design, loss functions, and hierarchical features.
+- [Model Zoo](docs/MODEL_ZOO.md): Supported classification backbones and U-Net segmenters.
+- [Augmentation & Data Guide](docs/DATA_AND_AUGMENTATIONS.md): Medical augmentation rules, MONAI pipelines, and dataset configuration.
+- [Kaggle & Colab Guide](docs/KAGGLE_COLAB_GUIDE.md): Remote GPU execution, HuggingFace Hub sync, and multi-GPU DDP setup.
 
 ---
 

@@ -37,7 +37,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
+try:
+    from torch.utils.tensorboard import SummaryWriter
+except ImportError:
+    SummaryWriter = None
 
 from training.metrics import MetricAccumulator
 
@@ -182,7 +185,7 @@ class HierarchyTrainer:
 
         tb_dir = Path(log_dir) / mode
         tb_dir.mkdir(parents=True, exist_ok=True)
-        self.writer = SummaryWriter(log_dir=str(tb_dir))
+        self.writer = SummaryWriter(log_dir=str(tb_dir)) if SummaryWriter is not None else None
 
         # Move model and loss alpha weights to device
         self.model.to(self.device)
@@ -587,13 +590,14 @@ class HierarchyTrainer:
         tag = f"fold{fold_id}/{phase}"
 
         # Scalars
-        self.writer.add_scalar(f"{tag}/loss/train", train_loss, step)
-        self.writer.add_scalar(f"{tag}/loss/val",   val_loss,   step)
-        self.writer.add_scalar(f"{tag}/lr",         lr,         step)
+        if self.writer is not None:
+            self.writer.add_scalar(f"{tag}/loss/train", train_loss, step)
+            self.writer.add_scalar(f"{tag}/loss/val",   val_loss,   step)
+            self.writer.add_scalar(f"{tag}/lr",         lr,         step)
 
-        for key, val in {**train_metrics, **val_metrics}.items():
-            if isinstance(val, float) and not np.isnan(val):
-                self.writer.add_scalar(f"{tag}/{key}", val, step)
+            for key, val in {**train_metrics, **val_metrics}.items():
+                if isinstance(val, float) and not np.isnan(val):
+                    self.writer.add_scalar(f"{tag}/{key}", val, step)
 
         # Console — compact summary line
         logger.info(
@@ -672,4 +676,5 @@ class HierarchyTrainer:
 
     def close(self) -> None:
         """Flush and close TensorBoard writer — call after each fold."""
-        self.writer.close()
+        if self.writer is not None:
+            self.writer.close()
